@@ -20,6 +20,8 @@
     "fmt:check": "vp fmt --check",
     "build:contracts": "vp run --filter @t3tools/contracts build",
     "release:smoke": "node scripts/release-smoke.ts",
+    "test:browser:install": "vp run --filter @t3tools/web test:browser:install",
+    "ui-smoke": "vp run --filter @t3tools/web ui-smoke",
     "dist:linux": "node scripts/package-linux.ts",
     "dist:linux:deb": "node scripts/package-linux.ts --format deb",
     "dist:linux:rpm": "node scripts/package-linux.ts --format rpm",

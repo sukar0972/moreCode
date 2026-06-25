@@ -8,6 +8,13 @@
   - If native mobile code is modified, `vp run lint:mobile` must also pass.
 - Do not run these verification commands for review-only, analysis-only, or other tasks that do not modify code.
 - Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
+- When you change the production web bundle, server static serving, or startup auth flow, run the UI smoke test after building:
+  - `vp run build`
+  - `vp run test:browser:install` (first time, or when Playwright browsers are missing; root alias for `@t3tools/web`)
+  - `vp run ui-smoke`
+- The UI smoke test boots the built server via `apps/server/dist/bin.mjs serve` (production `dist/client/` bundle), authenticates with the startup pairing token from headless server output, opens the bundled UI in headless Chromium, and asserts the chat shell loads without the root error view, WebSocket failure text, or uncaught page errors.
+- The smoke runner clears `VITE_DEV_SERVER_URL` and `VITE_WS_URL` in the server subprocess environment so the test exercises the production bundle. If either variable is set in your shell or `.env.local`, the server may proxy to the Vite dev app instead of `dist/client`, and the smoke test will hang or fail.
+- Smoke helpers live in `scripts/lib/ui-smoke.ts`; the Playwright entrypoint is `apps/web/scripts/ui-smoke.ts`. CI runs this in the `UI Smoke` workflow job after `vp run build`.
 
 ## Project Snapshot
 

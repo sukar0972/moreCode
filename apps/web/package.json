@@ -13,7 +13,8 @@
     "typecheck": "tsgo --noEmit",
     "test": "vp test run --passWithNoTests --project unit",
     "test:browser": "vp test run --project browser",
-    "test:browser:install": "playwright install --with-deps chromium"
+    "test:browser:install": "playwright install --with-deps chromium",
+    "ui-smoke": "node scripts/ui-smoke.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
