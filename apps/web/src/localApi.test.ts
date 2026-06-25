@@ -56,6 +56,7 @@ const rpcClientMock = {
   },
   projects: {
     searchEntries: vi.fn(),
+    readFile: vi.fn(),
     writeFile: vi.fn(),
   },
   filesystem: {

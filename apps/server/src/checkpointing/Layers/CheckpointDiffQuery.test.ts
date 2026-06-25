@@ -10,6 +10,7 @@ import {
 } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointDiffQueryLive } from "./CheckpointDiffQuery.ts";
+import { CheckpointThreadNotFoundError } from "../Errors.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointDiffQuery } from "../Services/CheckpointDiffQuery.ts";
 
@@ -405,17 +406,24 @@ describe("CheckpointDiffQueryLive", () => {
       ),
     );
 
-    await expect(
-      Effect.runPromise(
-        Effect.gen(function* () {
-          const query = yield* CheckpointDiffQuery;
-          return yield* query.getTurnDiff({
-            threadId,
-            fromTurnCount: 0,
-            toTurnCount: 1,
-          });
-        }).pipe(Effect.provide(layer)),
-      ),
-    ).rejects.toThrow("Thread 'thread-missing' not found.");
+    const error = await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+        });
+      }).pipe(Effect.provide(layer), Effect.flip),
+    );
+
+    expect(error).toBeInstanceOf(CheckpointThreadNotFoundError);
+    expect(error).toMatchObject({
+      operation: "CheckpointDiffQuery.getTurnDiff",
+      threadId,
+    });
+    expect(error.message).toBe(
+      "Checkpoint invariant violation in CheckpointDiffQuery.getTurnDiff: Thread 'thread-missing' not found.",
+    );
   });
 });

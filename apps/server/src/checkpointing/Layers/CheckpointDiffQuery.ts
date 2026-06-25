@@ -11,7 +11,13 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
+import {
+  CheckpointDiffResultInvalidError,
+  CheckpointRefUnavailableError,
+  CheckpointThreadNotFoundError,
+  CheckpointTurnRangeUnavailableError,
+  CheckpointWorkspacePathMissingError,
+} from "../Errors.ts";
 import { checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import {
@@ -60,9 +66,9 @@ const make = Effect.gen(function* () {
           diff: "",
         };
         if (!isTurnDiffResult(emptyDiff)) {
-          return yield* new CheckpointInvariantError({
+          return yield* new CheckpointDiffResultInvalidError({
             operation,
-            detail: "Computed turn diff result does not satisfy contract schema.",
+            threadId: input.threadId,
           });
         }
         return emptyDiff;
@@ -72,9 +78,9 @@ const make = Effect.gen(function* () {
         .getThreadCheckpointContext(input.threadId)
         .pipe(Effect.withSpan("checkpoint.turnDiff.lookupContext"));
       if (Option.isNone(threadContext)) {
-        return yield* new CheckpointInvariantError({
+        return yield* new CheckpointThreadNotFoundError({
           operation,
-          detail: `Thread '${input.threadId}' not found.`,
+          threadId: input.threadId,
         });
       }
 
@@ -83,18 +89,19 @@ const make = Effect.gen(function* () {
         0,
       );
       if (input.toTurnCount > maxTurnCount) {
-        return yield* new CheckpointUnavailableError({
+        return yield* new CheckpointTurnRangeUnavailableError({
+          operation,
           threadId: input.threadId,
-          turnCount: input.toTurnCount,
-          detail: `Turn diff range exceeds current turn count: requested ${input.toTurnCount}, current ${maxTurnCount}.`,
+          requestedTurnCount: input.toTurnCount,
+          availableTurnCount: maxTurnCount,
         });
       }
 
       const workspaceCwd = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
       if (!workspaceCwd) {
-        return yield* new CheckpointInvariantError({
+        return yield* new CheckpointWorkspacePathMissingError({
           operation,
-          detail: `Workspace path missing for thread '${input.threadId}' when computing turn diff.`,
+          threadId: input.threadId,
         });
       }
 
@@ -105,10 +112,11 @@ const make = Effect.gen(function* () {
               (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
             )?.checkpointRef;
       if (!fromCheckpointRef) {
-        return yield* new CheckpointUnavailableError({
+        return yield* new CheckpointRefUnavailableError({
+          operation,
           threadId: input.threadId,
           turnCount: input.fromTurnCount,
-          detail: `Checkpoint ref is unavailable for turn ${input.fromTurnCount}.`,
+          checkpoint: "from",
         });
       }
 
@@ -116,10 +124,11 @@ const make = Effect.gen(function* () {
         (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
       )?.checkpointRef;
       if (!toCheckpointRef) {
-        return yield* new CheckpointUnavailableError({
+        return yield* new CheckpointRefUnavailableError({
+          operation,
           threadId: input.threadId,
           turnCount: input.toTurnCount,
-          detail: `Checkpoint ref is unavailable for turn ${input.toTurnCount}.`,
+          checkpoint: "to",
         });
       }
 
@@ -135,9 +144,9 @@ const make = Effect.gen(function* () {
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {
-        return yield* new CheckpointInvariantError({
+        return yield* new CheckpointDiffResultInvalidError({
           operation,
-          detail: "Computed turn diff result does not satisfy contract schema.",
+          threadId: input.threadId,
         });
       }
 
@@ -168,9 +177,9 @@ const make = Effect.gen(function* () {
         "",
       );
       if (!isTurnDiffResult(emptyDiff)) {
-        return yield* new CheckpointInvariantError({
+        return yield* new CheckpointDiffResultInvalidError({
           operation,
-          detail: "Computed full thread diff result does not satisfy contract schema.",
+          threadId: input.threadId,
         });
       }
       return emptyDiff satisfies OrchestrationGetFullThreadDiffResult;
@@ -181,33 +190,35 @@ const make = Effect.gen(function* () {
       .pipe(Effect.withSpan("checkpoint.fullThread.lookupContext"));
 
     if (Option.isNone(threadContext)) {
-      return yield* new CheckpointInvariantError({
+      return yield* new CheckpointThreadNotFoundError({
         operation,
-        detail: `Thread '${input.threadId}' not found.`,
+        threadId: input.threadId,
       });
     }
 
     if (input.toTurnCount > threadContext.value.latestCheckpointTurnCount) {
-      return yield* new CheckpointUnavailableError({
+      return yield* new CheckpointTurnRangeUnavailableError({
+        operation,
         threadId: input.threadId,
-        turnCount: input.toTurnCount,
-        detail: `Turn diff range exceeds current turn count: requested ${input.toTurnCount}, current ${threadContext.value.latestCheckpointTurnCount}.`,
+        requestedTurnCount: input.toTurnCount,
+        availableTurnCount: threadContext.value.latestCheckpointTurnCount,
       });
     }
 
     const workspaceCwd = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
     if (!workspaceCwd) {
-      return yield* new CheckpointInvariantError({
+      return yield* new CheckpointWorkspacePathMissingError({
         operation,
-        detail: `Workspace path missing for thread '${input.threadId}' when computing full thread diff.`,
+        threadId: input.threadId,
       });
     }
 
     if (!threadContext.value.toCheckpointRef) {
-      return yield* new CheckpointUnavailableError({
+      return yield* new CheckpointRefUnavailableError({
+        operation,
         threadId: input.threadId,
         turnCount: input.toTurnCount,
-        detail: `Checkpoint ref is unavailable for turn ${input.toTurnCount}.`,
+        checkpoint: "to",
       });
     }
 
@@ -230,9 +241,9 @@ const make = Effect.gen(function* () {
       diff,
     );
     if (!isTurnDiffResult(turnDiff)) {
-      return yield* new CheckpointInvariantError({
+      return yield* new CheckpointDiffResultInvalidError({
         operation,
-        detail: "Computed full thread diff result does not satisfy contract schema.",
+        threadId: input.threadId,
       });
     }
 

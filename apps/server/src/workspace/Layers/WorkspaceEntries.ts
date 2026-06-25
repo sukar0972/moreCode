@@ -25,7 +25,11 @@ import { VcsDriverRegistry } from "../../vcs/VcsDriverRegistry.ts";
 import {
   WorkspaceEntries,
   WorkspaceEntriesBrowseError,
+  WorkspaceEntriesCurrentProjectRequiredError,
   WorkspaceEntriesError,
+  WorkspaceEntriesReadDirectoryError,
+  WorkspaceEntriesWindowsPathUnsupportedError,
+  WorkspaceSearchIndexScanFailed,
   type WorkspaceEntriesShape,
 } from "../Services/WorkspaceEntries.ts";
 import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
@@ -151,36 +155,31 @@ function directoryAncestorsOf(relativePath: string): string[] {
   return directories;
 }
 
-const resolveBrowseTarget = (
+const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   pathService: Path.Path,
-): Effect.Effect<string, WorkspaceEntriesBrowseError> =>
-  Effect.gen(function* () {
-    const platform = yield* HostProcessPlatform;
-    if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
-      return yield* new WorkspaceEntriesBrowseError({
-        cwd: input.cwd,
-        partialPath: input.partialPath,
-        operation: "workspaceEntries.resolveBrowseTarget",
-        detail: "Windows-style paths are only supported on Windows.",
-      });
-    }
+): Effect.fn.Return<string, WorkspaceEntriesBrowseError> {
+  const platform = yield* HostProcessPlatform;
+  if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
+    return yield* new WorkspaceEntriesWindowsPathUnsupportedError({
+      cwd: input.cwd,
+      partialPath: input.partialPath,
+      platform,
+    });
+  }
 
-    if (!isExplicitRelativePath(input.partialPath)) {
-      return pathService.resolve(expandHomePath(input.partialPath, pathService));
-    }
+  if (!isExplicitRelativePath(input.partialPath)) {
+    return pathService.resolve(expandHomePath(input.partialPath, pathService));
+  }
 
-    if (!input.cwd) {
-      return yield* new WorkspaceEntriesBrowseError({
-        cwd: input.cwd,
-        partialPath: input.partialPath,
-        operation: "workspaceEntries.resolveBrowseTarget",
-        detail: "Relative filesystem browse paths require a current project.",
-      });
-    }
+  if (!input.cwd) {
+    return yield* new WorkspaceEntriesCurrentProjectRequiredError({
+      partialPath: input.partialPath,
+    });
+  }
 
-    return pathService.resolve(expandHomePath(input.cwd, pathService), input.partialPath);
-  });
+  return pathService.resolve(expandHomePath(input.cwd, pathService), input.partialPath);
+});
 
 export const makeWorkspaceEntries = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -290,10 +289,10 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
         return { relativeDir, dirents };
       },
       catch: (cause) =>
-        new WorkspaceEntriesError({
+        new WorkspaceSearchIndexScanFailed({
           cwd,
-          operation: "workspaceEntries.readDirectoryEntries",
-          detail: cause instanceof Error ? cause.message : String(cause),
+          directory: relativeDir || ".",
+          reason: cause instanceof Error ? cause.message : String(cause),
           cause,
         }),
     }).pipe(
@@ -417,17 +416,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
   ): Effect.fn.Return<string, WorkspaceEntriesError> {
-    return yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceEntriesError({
-            cwd,
-            operation: "workspaceEntries.normalizeWorkspaceRoot",
-            detail: cause.message,
-            cause,
-          }),
-      ),
-    );
+    return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
   const invalidate: WorkspaceEntriesShape["invalidate"] = Effect.fn("WorkspaceEntries.invalidate")(
@@ -452,11 +441,10 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const dirents = yield* Effect.tryPromise({
         try: () => fsPromises.readdir(parentPath, { withFileTypes: true }),
         catch: (cause) =>
-          new WorkspaceEntriesBrowseError({
+          new WorkspaceEntriesReadDirectoryError({
             cwd: input.cwd,
             partialPath: input.partialPath,
-            operation: "workspaceEntries.browse.readDirectory",
-            detail: `Unable to browse '${parentPath}': ${cause instanceof Error ? cause.message : String(cause)}`,
+            parentPath,
             cause,
           }),
       }).pipe(

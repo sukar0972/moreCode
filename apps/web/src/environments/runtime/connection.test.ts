@@ -79,6 +79,12 @@ function createTestClient(config?: { readonly emitInitialSnapshot?: boolean }) {
     },
     projects: {
       searchEntries: vi.fn(async () => []),
+      readFile: vi.fn(async () => ({
+        relativePath: "README.md",
+        contents: "",
+        byteLength: 0,
+        truncated: false,
+      })),
       writeFile: vi.fn(async () => undefined),
     },
     shell: {

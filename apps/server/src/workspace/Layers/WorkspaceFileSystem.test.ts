@@ -54,6 +54,66 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 });
 
 it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
+  describe("readFile", () => {
+    it.effect("reads text files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "plans/effect-rpc.md", "# Plan\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "plans/effect-rpc.md",
+        });
+
+        expect(result).toEqual({
+          relativePath: "plans/effect-rpc.md",
+          contents: "# Plan\n",
+          byteLength: 7,
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("rejects directories", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fileSystem.makeDirectory(path.join(cwd, "src"));
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "src",
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspacePathNotFileError");
+      }),
+    );
+
+    it.effect("rejects binary files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fileSystem.writeFile(path.join(cwd, "image.bin"), new Uint8Array([0, 1, 2]));
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "image.bin",
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceBinaryFileError");
+      }),
+    );
+  });
+
   describe("writeFile", () => {
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {

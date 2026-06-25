@@ -33,8 +33,8 @@ const makeCheckpointStore = Effect.gen(function* () {
   });
 
   const isGitRepository: CheckpointStoreShape["isGitRepository"] = (cwd) =>
-    vcsRegistry.resolve({ cwd, requestedKind: "git" }).pipe(
-      Effect.map(() => true),
+    vcsRegistry.detect({ cwd, requestedKind: "git" }).pipe(
+      Effect.map((repository) => repository !== null),
       Effect.orElseSucceed(() => false),
     );
 

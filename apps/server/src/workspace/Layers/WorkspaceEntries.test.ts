@@ -13,7 +13,7 @@ import { ServerConfig } from "../../config.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
-import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
+import { WorkspaceEntries, WorkspaceSearchIndexScanFailed } from "../Services/WorkspaceEntries.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 
@@ -224,6 +224,24 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       }),
     );
 
+    it.effect("surfaces root directory scan failures as scan failures", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-readdir-failure-" });
+        vi.spyOn(fsPromises, "readdir").mockRejectedValueOnce(new Error("scan access denied"));
+
+        const error = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 }).pipe(
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(WorkspaceSearchIndexScanFailed);
+        expect(error).toMatchObject({
+          cwd,
+          directory: ".",
+          reason: "scan access denied",
+        });
+      }),
+    );
+
     it.effect("deduplicates concurrent index builds for the same cwd", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-concurrent-build-" });
@@ -393,7 +411,10 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           })
           .pipe(Effect.flip);
 
-        expect(error.detail).toBe("Relative filesystem browse paths require a current project.");
+        expect(error._tag).toBe("WorkspaceEntriesCurrentProjectRequiredError");
+        expect(error.message).toBe(
+          "A current project is required to browse relative workspace path './src'.",
+        );
       }),
     );
 
