@@ -28,6 +28,7 @@ import {
   type DesktopSshEnvironmentTarget,
   type DesktopServerExposureState,
   type EnvironmentId,
+  type ServerExposureState,
 } from "@t3tools/contracts";
 import { WsRpcClient } from "@t3tools/client-runtime";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
@@ -131,6 +132,7 @@ import { webRuntime } from "~/lib/runtime";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+type ConnectionServerExposureState = DesktopServerExposureState | ServerExposureState;
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -1884,7 +1886,7 @@ export function ConnectionsSettings() {
   const [connectingSshHostAlias, setConnectingSshHostAlias] = useState<string | null>(null);
 
   const [desktopServerExposureState, setDesktopServerExposureState] =
-    useState<DesktopServerExposureState | null>(null);
+    useState<ConnectionServerExposureState | null>(null);
   const [desktopAdvertisedEndpoints, setDesktopAdvertisedEndpoints] = useState<
     ReadonlyArray<AdvertisedEndpoint>
   >([]);
@@ -1942,7 +1944,7 @@ export function ConnectionsSettings() {
     String(DEFAULT_TAILSCALE_SERVE_PORT),
   );
   const [pendingDesktopServerExposureMode, setPendingDesktopServerExposureMode] = useState<
-    DesktopServerExposureState["mode"] | null
+    ConnectionServerExposureState["mode"] | null
   >(null);
   const primaryServerConfig = useServerConfig();
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
@@ -2018,16 +2020,24 @@ export function ConnectionsSettings() {
   }, [handleDesktopServerExposureChange, pendingDesktopServerExposureMode]);
 
   const handleConfirmTailscaleServeSetup = useCallback(async () => {
-    if (!desktopBridge) return;
     if (!isTailscaleServePortValid) return;
     setIsUpdatingTailscaleServe(true);
     setDesktopServerExposureError(null);
     try {
-      const nextState = await desktopBridge.setTailscaleServeEnabled({
-        enabled: true,
-        port: parsedTailscaleServePort,
-      });
+      const nextState = desktopBridge
+        ? await desktopBridge.setTailscaleServeEnabled({
+            enabled: true,
+            port: parsedTailscaleServePort,
+          })
+        : await getPrimaryEnvironmentConnection().client.server.setTailscaleServeEnabled({
+            enabled: true,
+            port: parsedTailscaleServePort,
+          });
+      const endpoints = desktopBridge
+        ? await desktopBridge.getAdvertisedEndpoints()
+        : await getPrimaryEnvironmentConnection().client.server.getAdvertisedEndpoints();
       setDesktopServerExposureState(nextState);
+      setDesktopAdvertisedEndpoints(endpoints);
       setPendingTailscaleServeEndpoint(null);
     } catch (error) {
       const message =
@@ -2056,15 +2066,25 @@ export function ConnectionsSettings() {
   );
 
   const handleConfirmTailscaleServeDisable = useCallback(async () => {
-    if (!desktopBridge) return;
     setIsUpdatingTailscaleServe(true);
     setDesktopServerExposureError(null);
     try {
-      const nextState = await desktopBridge.setTailscaleServeEnabled({
-        enabled: false,
-        port: desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT,
-      });
+      const servePort =
+        desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+      const nextState = desktopBridge
+        ? await desktopBridge.setTailscaleServeEnabled({
+            enabled: false,
+            port: servePort,
+          })
+        : await getPrimaryEnvironmentConnection().client.server.setTailscaleServeEnabled({
+            enabled: false,
+            port: servePort,
+          });
+      const endpoints = desktopBridge
+        ? await desktopBridge.getAdvertisedEndpoints()
+        : await getPrimaryEnvironmentConnection().client.server.getAdvertisedEndpoints();
       setDesktopServerExposureState(nextState);
+      setDesktopAdvertisedEndpoints(endpoints);
       setDisableTailscaleServeDialogOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to disable Tailscale HTTPS.";
@@ -2458,9 +2478,31 @@ export function ConnectionsSettings() {
           setDesktopServerExposureError(message);
         });
     } else {
-      setDesktopServerExposureState(null);
-      setDesktopAdvertisedEndpoints([]);
-      setDesktopServerExposureError(null);
+      const server = getPrimaryEnvironmentConnection().client.server;
+      void server
+        .getExposureState()
+        .then((state) => {
+          if (cancelled) return;
+          setDesktopServerExposureState(state);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          const message =
+            error instanceof Error ? error.message : "Failed to load server exposure state.";
+          setDesktopServerExposureError(message);
+        });
+      void server
+        .getAdvertisedEndpoints()
+        .then((endpoints) => {
+          if (cancelled) return;
+          setDesktopAdvertisedEndpoints(endpoints);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          const message =
+            error instanceof Error ? error.message : "Failed to load reachable endpoints.";
+          setDesktopServerExposureError(message);
+        });
     }
 
     return () => {
@@ -2831,9 +2873,30 @@ export function ConnectionsSettings() {
     <SettingsRow
       title="Network access"
       description={
-        currentAuthPolicy === "remote-reachable"
-          ? "This backend is already configured for remote access. Network exposure changes must be made where the server is launched."
-          : "This backend is only reachable on this machine. Restart it with a non-loopback host to enable remote pairing."
+        isLocalBackendNetworkAccessible ? (
+          <NetworkAccessDescription
+            endpoint={defaultDesktopNetworkAdvertisedEndpoint}
+            hiddenEndpointCount={Math.max(visibleDesktopNetworkAdvertisedEndpoints.length - 1, 0)}
+            expanded={isAdvertisedEndpointListExpanded}
+            onToggleExpanded={() => setIsAdvertisedEndpointListExpanded((expanded) => !expanded)}
+            fallback={
+              desktopServerExposureState?.endpointUrl
+                ? `Reachable at ${desktopServerExposureState.endpointUrl}`
+                : desktopServerExposureState?.advertisedHost
+                  ? `Exposed on all interfaces. Pairing links use ${desktopServerExposureState.advertisedHost}.`
+                  : "Exposed on all interfaces."
+            }
+          />
+        ) : currentAuthPolicy === "remote-reachable" ? (
+          "This backend is already configured for remote access. Network exposure changes must be made where the server is launched."
+        ) : (
+          "This backend is only reachable on this machine. Restart it with a non-loopback host to enable remote pairing."
+        )
+      }
+      status={
+        desktopServerExposureError ? (
+          <span className="block text-destructive">{desktopServerExposureError}</span>
+        ) : null
       }
       control={
         <Tooltip>
@@ -2885,6 +2948,8 @@ export function ConnectionsSettings() {
             ) : (
               <>
                 {renderDisabledNetworkAccessRow()}
+                {renderEndpointRows("endpoint-rail")}
+                {renderTailscaleRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             )}

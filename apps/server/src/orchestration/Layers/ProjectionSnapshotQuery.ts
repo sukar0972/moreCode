@@ -1311,6 +1311,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   id: row.projectId,
                   title: row.title,
                   workspaceRoot: row.workspaceRoot,
+                  ...(row.kind !== undefined ? { kind: row.kind } : {}),
+                  ...(row.contextMarkdown !== undefined
+                    ? { contextMarkdown: row.contextMarkdown }
+                    : {}),
+                  ...(row.contextVersion !== undefined
+                    ? { contextVersion: row.contextVersion }
+                    : {}),
                   defaultModelSelection: row.defaultModelSelection,
                   scripts: row.scripts,
                   createdAt: row.createdAt,

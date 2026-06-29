@@ -76,7 +76,7 @@ it("resolves a LAN connection string from the first external IPv4 interface", ()
       {
         address: "192.168.1.42",
         netmask: "255.255.255.0",
-        family: "IPv4",
+        family: "IPv4" as const,
         mac: "00:00:00:00:00:00",
         internal: false,
         cidr: "192.168.1.42/24",

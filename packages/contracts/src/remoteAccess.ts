@@ -66,3 +66,30 @@ export const AdvertisedEndpoint = Schema.Struct({
   description: Schema.optional(TrimmedNonEmptyString),
 });
 export type AdvertisedEndpoint = typeof AdvertisedEndpoint.Type;
+
+export const ServerExposureMode = Schema.Literals(["local-only", "network-accessible"]);
+export type ServerExposureMode = typeof ServerExposureMode.Type;
+
+export const ServerExposureState = Schema.Struct({
+  mode: ServerExposureMode,
+  endpointUrl: Schema.NullOr(Schema.String),
+  advertisedHost: Schema.NullOr(Schema.String),
+  tailscaleServeEnabled: Schema.Boolean,
+  tailscaleServePort: Schema.Number,
+});
+export type ServerExposureState = typeof ServerExposureState.Type;
+
+export const ServerTailscaleServeInput = Schema.Struct({
+  enabled: Schema.Boolean,
+  port: Schema.optional(Schema.Number),
+});
+export type ServerTailscaleServeInput = typeof ServerTailscaleServeInput.Type;
+
+export class ServerExposureError extends Schema.TaggedErrorClass<ServerExposureError>()(
+  "ServerExposureError",
+  {
+    operation: Schema.Literals(["read", "tailscale-serve"]),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}

@@ -152,6 +152,13 @@ export interface WsRpcClient {
       typeof WS_METHODS.serverGetProcessResourceHistory
     >;
     readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
+    readonly getExposureState: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetExposureState>;
+    readonly getAdvertisedEndpoints: RpcUnaryNoArgMethod<
+      typeof WS_METHODS.serverGetAdvertisedEndpoints
+    >;
+    readonly setTailscaleServeEnabled: RpcUnaryMethod<
+      typeof WS_METHODS.serverSetTailscaleServeEnabled
+    >;
   };
   readonly cloud: {
     readonly getRelayClientStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.cloudGetRelayClientStatus>;
@@ -330,6 +337,12 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverGetProcessResourceHistory](input)),
       signalProcess: (input) =>
         transport.request((client) => client[WS_METHODS.serverSignalProcess](input)),
+      getExposureState: () =>
+        transport.request((client) => client[WS_METHODS.serverGetExposureState]({})),
+      getAdvertisedEndpoints: () =>
+        transport.request((client) => client[WS_METHODS.serverGetAdvertisedEndpoints]({})),
+      setTailscaleServeEnabled: (input) =>
+        transport.request((client) => client[WS_METHODS.serverSetTailscaleServeEnabled](input)),
     },
     cloud: {
       getRelayClientStatus: () =>

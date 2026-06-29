@@ -17,6 +17,7 @@ import {
   AuthRelayWriteScope,
   AuthTerminalOperateScope,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
@@ -94,6 +95,7 @@ import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentit
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import type { AuthenticatedSession } from "./auth/EnvironmentAuth.ts";
+import * as ServerExposure from "./access/ServerExposure.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -272,6 +274,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetExposureState, AuthAccessReadScope],
+  [WS_METHODS.serverGetAdvertisedEndpoints, AuthAccessReadScope],
+  [WS_METHODS.serverSetTailscaleServeEnabled, AuthAccessWriteScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -376,6 +381,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const serverExposure = yield* ServerExposure.ServerExposure;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
@@ -1201,6 +1207,26 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetExposureState]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverGetExposureState, serverExposure.getState, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverGetAdvertisedEndpoints]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetAdvertisedEndpoints,
+            serverExposure.getAdvertisedEndpoints,
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverSetTailscaleServeEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSetTailscaleServeEnabled,
+            serverExposure.setTailscaleServeEnabled(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
             "rpc.aggregate": "cloud",
