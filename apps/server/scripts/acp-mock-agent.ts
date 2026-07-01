@@ -22,6 +22,7 @@ const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION ===
 const emitCreatePlan = process.env.T3_ACP_EMIT_CREATE_PLAN === "1";
 const emitUpdateTodos = process.env.T3_ACP_EMIT_UPDATE_TODOS === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const hangPromptWithXAiComplete = process.env.T3_ACP_HANG_PROMPT_WITH_XAI_COMPLETE === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -330,12 +331,23 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      const promptText = request.prompt
+        .map((block) => (block.type === "text" ? block.text : ""))
+        .join("\n");
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.invalidParams("Mock prompt failure", {
           method: "session/prompt",
           params: request,
         });
+      }
+
+      if (hangPromptWithXAiComplete) {
+        yield* agent.client.extNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          stopReason: "end_turn",
+        });
+        return yield* Effect.never;
       }
 
       if (emitInterleavedAssistantToolCalls) {
@@ -388,7 +400,7 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
-      if (emitToolCalls) {
+      if (emitToolCalls && promptText.includes("trigger permission")) {
         const toolCallId = "tool-call-1";
 
         yield* agent.client.sessionUpdate({

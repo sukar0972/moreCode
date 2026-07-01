@@ -586,6 +586,8 @@ export function makeGrokBuildAdapter(
               pendingUserInputs,
               turns: [],
               activeTurnId: undefined,
+              interruptedTurnIds: new Set(),
+              promptFibers: new Set(),
               lastPlanFingerprint: undefined,
               currentModelId: mapGrokSlugToAcpModelId(input.modelSelection?.model),
               promptsInFlight: 0,
@@ -684,13 +686,55 @@ export function makeGrokBuildAdapter(
 
       sendTurn,
 
-      interruptTurn: (threadId) =>
+      interruptTurn: (threadId, turnId) =>
         withThreadLock(
           threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(threadId);
+            const targetTurnId = turnId ?? ctx.activeTurnId;
+            if (targetTurnId === undefined) {
+              yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+              yield* settlePendingAcpUserInputsAsCancelled(ctx.pendingUserInputs);
+              yield* ctx.acp.cancel.pipe(Effect.ignore);
+              return;
+            }
+            const shouldCancelActiveTurn = ctx.activeTurnId === targetTurnId;
+            if (turnId !== undefined && !shouldCancelActiveTurn) {
+              return;
+            }
+            ctx.interruptedTurnIds.add(targetTurnId);
             yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
             yield* settlePendingAcpUserInputsAsCancelled(ctx.pendingUserInputs);
+            if (ctx.session.status === "running") {
+              ctx.activeTurnId = undefined;
+              ctx.promptsInFlight = 0;
+              const promptFibers = Array.from(ctx.promptFibers);
+              ctx.promptFibers.clear();
+              yield* Effect.forEach(promptFibers, (fiber) => Fiber.interrupt(fiber), {
+                discard: true,
+              });
+              const {
+                activeTurnId: _activeTurnId,
+                lastError: _lastError,
+                ...session
+              } = ctx.session;
+              ctx.session = {
+                ...session,
+                status: "ready",
+                updatedAt: yield* nowIso,
+              };
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId,
+                turnId: targetTurnId,
+                payload: {
+                  state: "cancelled",
+                  stopReason: "cancelled",
+                },
+              });
+            }
             yield* ctx.acp.cancel.pipe(Effect.ignore);
           }),
         ),

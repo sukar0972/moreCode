@@ -433,8 +433,14 @@ grokPermissionAdapterTestLayer("GrokBuildAdapter permissions", (it) => {
         Stream.runCollect,
         Effect.forkChild,
       );
+      const turnCompletedFiber = yield* Stream.take(adapter.streamEvents, 20).pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
 
-      yield* adapter.sendTurn({
+      const turn = yield* adapter.sendTurn({
         threadId,
         input: "trigger permission",
         attachments: [],
@@ -443,15 +449,169 @@ grokPermissionAdapterTestLayer("GrokBuildAdapter permissions", (it) => {
       const openedEvents = Array.from(yield* Fiber.join(requestOpenedFiber));
       const opened = openedEvents[0];
       assert.isDefined(opened);
-      if (opened?.type === "request.opened" && opened.requestId) {
-        yield* adapter.respondToRequest(
-          threadId,
-          ApprovalRequestId.make(String(opened.requestId)),
-          "accept",
-        );
+
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+
+      const completedEvents = Array.from(yield* Fiber.join(turnCompletedFiber));
+      const completed = completedEvents[0];
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.turnId, turn.turnId);
+        assert.equal(completed.payload.state, "cancelled");
+        assert.equal(completed.payload.stopReason, "cancelled");
       }
 
-      yield* adapter.interruptTurn(threadId);
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      assert.equal(session?.status, "ready");
+      assert.isUndefined(session?.activeTurnId);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("completes a later turn after interrupting a blocked permission turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* GrokBuildAdapter;
+      const threadId = ThreadId.make("grok-permission-interrupt-next-turn-thread");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok-build"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok-build-test"),
+          model: "default",
+        },
+      });
+
+      const requestOpenedFiber = yield* Stream.take(adapter.streamEvents, 20).pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      const completedFiber = yield* Stream.take(adapter.streamEvents, 40).pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const interruptedTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "trigger permission",
+        attachments: [],
+      });
+
+      yield* Fiber.join(requestOpenedFiber);
+      yield* adapter.interruptTurn(threadId, interruptedTurn.turnId);
+
+      const nextTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "plain follow-up after interrupt",
+        attachments: [],
+      });
+
+      const completedEvents = Array.from(yield* Fiber.join(completedFiber));
+      assert.equal(completedEvents.length, 2);
+      const [cancelled, completed] = completedEvents;
+      assert.equal(cancelled?.type, "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (cancelled?.type === "turn.completed") {
+        assert.equal(cancelled.turnId, interruptedTurn.turnId);
+        assert.equal(cancelled.payload.state, "cancelled");
+      }
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.turnId, nextTurn.turnId);
+        assert.equal(completed.payload.state, "completed");
+        assert.equal(completed.payload.stopReason, "end_turn");
+      }
+
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      assert.equal(session?.status, "ready");
+      assert.isUndefined(session?.activeTurnId);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+});
+
+const grokPromptCompleteAdapterTestLayer = it.layer(
+  Layer.effect(
+    GrokBuildAdapter,
+    Effect.gen(function* () {
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_HANG_PROMPT_WITH_XAI_COMPLETE: "1" }),
+      );
+      const settings = decodeGrokBuildSettings({
+        enabled: true,
+        command: wrapperPath,
+        args: [],
+        envJson: "{}",
+        customModels: [],
+      });
+      return yield* makeGrokBuildAdapter(settings, {
+        instanceId: ProviderInstanceId.make("grok-build-test"),
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-grok-prompt-complete-test-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+grokPromptCompleteAdapterTestLayer("GrokBuildAdapter xAI prompt completion", (it) => {
+  it.effect("settles a turn from prompt_complete when session/prompt remains pending", () =>
+    Effect.gen(function* () {
+      const adapter = yield* GrokBuildAdapter;
+      const threadId = ThreadId.make("grok-prompt-complete-thread");
+      const turnCompletedFiber = yield* Stream.take(adapter.streamEvents, 20).pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok-build"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok-build-test"),
+          model: "default",
+        },
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "complete through xai notification",
+        attachments: [],
+      });
+
+      const completedEvents = Array.from(yield* Fiber.join(turnCompletedFiber));
+      const completed = completedEvents[0];
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.turnId, turn.turnId);
+        assert.equal(completed.payload.state, "completed");
+        assert.equal(completed.payload.stopReason, "end_turn");
+      }
+
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      assert.equal(session?.status, "ready");
+      assert.isUndefined(session?.activeTurnId);
+
       yield* adapter.stopSession(threadId);
     }),
   );

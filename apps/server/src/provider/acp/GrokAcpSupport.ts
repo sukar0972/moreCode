@@ -1,6 +1,8 @@
 import { type GrokBuildSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -12,6 +14,7 @@ import {
   type AcpSessionRuntimeShape,
   type AcpSpawnInput,
 } from "./AcpSessionRuntime.ts";
+import { parseXAiPromptCompleteResponse } from "./XAiAcpExtension.ts";
 
 export const GROK_BUILD_RESUME_VERSION = 1;
 
@@ -125,7 +128,96 @@ export const makeGrokBuildAcpRuntime = (
         ),
       ),
     );
-    return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(acpContext));
+    const runtime = yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(acpContext));
+    const activeSessionIdRef = yield* Ref.make<string | undefined>(undefined);
+    const promptCompleteWaitersRef = yield* Ref.make(
+      new Map<string, ReadonlyArray<Deferred.Deferred<EffectAcpSchema.PromptResponse>>>(),
+    );
+
+    yield* runtime.handleUnknownExtNotification((method, payload) => {
+      if (method !== "_x.ai/session/prompt_complete" && method !== "x.ai/session/prompt_complete") {
+        return Effect.void;
+      }
+      const completed = parseXAiPromptCompleteResponse(payload);
+      if (!completed) {
+        return Effect.void;
+      }
+      return Ref.modify(promptCompleteWaitersRef, (waiters) => {
+        const sessionWaiters = waiters.get(completed.sessionId) ?? [];
+        const [waiter, ...remainingWaiters] = sessionWaiters;
+        if (!waiter) {
+          return [Effect.void, waiters] as const;
+        }
+        const next = new Map(waiters);
+        if (remainingWaiters.length > 0) {
+          next.set(completed.sessionId, remainingWaiters);
+        } else {
+          next.delete(completed.sessionId);
+        }
+        return [Deferred.succeed(waiter, completed.response).pipe(Effect.asVoid), next] as const;
+      }).pipe(Effect.flatten);
+    });
+
+    const start: AcpSessionRuntimeShape["start"] = () =>
+      runtime.start().pipe(Effect.tap((started) => Ref.set(activeSessionIdRef, started.sessionId)));
+
+    const settlePromptCompleteWaitersAsCancelled = Ref.modify(
+      promptCompleteWaitersRef,
+      (waiters) => [
+        Effect.forEach(
+          Array.from(waiters.values()).flat(),
+          (waiter) =>
+            Deferred.succeed(waiter, {
+              stopReason: "cancelled",
+            } satisfies EffectAcpSchema.PromptResponse),
+          { discard: true },
+        ),
+        new Map<string, ReadonlyArray<Deferred.Deferred<EffectAcpSchema.PromptResponse>>>(),
+      ],
+    ).pipe(Effect.flatten);
+
+    const prompt: AcpSessionRuntimeShape["prompt"] = (payload) =>
+      Effect.gen(function* () {
+        const sessionId = yield* Ref.get(activeSessionIdRef);
+        if (!sessionId) {
+          return yield* runtime.prompt(payload);
+        }
+        const waiter = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        yield* Ref.update(promptCompleteWaitersRef, (waiters) => {
+          const next = new Map(waiters);
+          next.set(sessionId, [...(next.get(sessionId) ?? []), waiter]);
+          return next;
+        });
+        return yield* Effect.raceFirst(runtime.prompt(payload), Deferred.await(waiter)).pipe(
+          Effect.ensuring(
+            Ref.update(promptCompleteWaitersRef, (waiters) => {
+              const sessionWaiters = waiters.get(sessionId);
+              if (!sessionWaiters?.includes(waiter)) {
+                return waiters;
+              }
+              const remainingWaiters = sessionWaiters.filter((candidate) => candidate !== waiter);
+              const next = new Map(waiters);
+              if (remainingWaiters.length > 0) {
+                next.set(sessionId, remainingWaiters);
+              } else {
+                next.delete(sessionId);
+              }
+              return next;
+            }),
+          ),
+        );
+      });
+
+    const cancel: AcpSessionRuntimeShape["cancel"] = settlePromptCompleteWaitersAsCancelled.pipe(
+      Effect.andThen(runtime.cancel),
+    );
+
+    return {
+      ...runtime,
+      start,
+      prompt,
+      cancel,
+    } satisfies AcpSessionRuntimeShape;
   });
 
 export function extractGrokAcpPromptCapabilities(
