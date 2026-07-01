@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const AdvertisedEndpointProviderKind = Schema.Literals([
   "core",
@@ -81,7 +81,7 @@ export type ServerExposureState = typeof ServerExposureState.Type;
 
 export const ServerTailscaleServeInput = Schema.Struct({
   enabled: Schema.Boolean,
-  port: Schema.optional(Schema.Number),
+  port: Schema.optional(PortSchema),
 });
 export type ServerTailscaleServeInput = typeof ServerTailscaleServeInput.Type;
 

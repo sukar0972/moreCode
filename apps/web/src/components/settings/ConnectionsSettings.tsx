@@ -1325,6 +1325,7 @@ type AdvertisedEndpointListRowProps = {
   onSetupTailscaleServe: (endpoint: AdvertisedEndpoint) => void;
   onDisableTailscaleServe: (endpoint: AdvertisedEndpoint) => void;
   isUpdatingTailscaleServe: boolean;
+  tailscaleActionsRequireRestart?: boolean;
 };
 
 const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
@@ -1335,7 +1336,9 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
   onSetupTailscaleServe,
   onDisableTailscaleServe,
   isUpdatingTailscaleServe,
+  tailscaleActionsRequireRestart = true,
 }: AdvertisedEndpointListRowProps) {
+  const tailscaleUpdatingLabel = tailscaleActionsRequireRestart ? "Restarting…" : "Applying…";
   const isAvailable = endpoint.status === "available";
   const needsTailscaleSetup = isTailscaleHttpsEndpoint(endpoint) && endpoint.status !== "available";
   const canDisableTailscaleServe =
@@ -1379,7 +1382,7 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
               onClick={() => onSetupTailscaleServe(endpoint)}
               disabled={isUpdatingTailscaleServe}
             >
-              {isUpdatingTailscaleServe ? "Restarting…" : "Setup"}
+              {isUpdatingTailscaleServe ? tailscaleUpdatingLabel : "Setup"}
             </Button>
           ) : null}
           {canDisableTailscaleServe ? (
@@ -1389,7 +1392,7 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
               onClick={() => onDisableTailscaleServe(endpoint)}
               disabled={isUpdatingTailscaleServe}
             >
-              {isUpdatingTailscaleServe ? "Restarting…" : "Disable"}
+              {isUpdatingTailscaleServe ? tailscaleUpdatingLabel : "Disable"}
             </Button>
           ) : null}
           {!needsTailscaleSetup && !isDefault ? (
@@ -2783,6 +2786,7 @@ export function ConnectionsSettings() {
               onSetupTailscaleServe={handleStartTailscaleServeSetup}
               onDisableTailscaleServe={handleStartTailscaleServeDisable}
               isUpdatingTailscaleServe={isUpdatingTailscaleServe}
+              tailscaleActionsRequireRestart={Boolean(desktopBridge)}
             />
           );
         })
@@ -3039,7 +3043,9 @@ export function ConnectionsSettings() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  more Code will restart the local backend without Tailscale Serve.
+                  {desktopBridge
+                    ? "more Code will restart the local backend without Tailscale Serve."
+                    : "more Code will disable Tailscale Serve for this backend."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -3057,10 +3063,12 @@ export function ConnectionsSettings() {
                   {isUpdatingTailscaleServe ? (
                     <>
                       <Spinner className="size-3.5" />
-                      Restarting…
+                      {desktopBridge ? "Restarting…" : "Applying…"}
                     </>
-                  ) : (
+                  ) : desktopBridge ? (
                     "Restart and disable"
+                  ) : (
+                    "Disable"
                   )}
                 </Button>
               </AlertDialogFooter>
@@ -3077,8 +3085,9 @@ export function ConnectionsSettings() {
               <DialogHeader>
                 <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
                 <DialogDescription>
-                  more Code will restart the local backend with Tailscale Serve enabled and ask
-                  Tailscale to proxy HTTPS traffic to this backend.
+                  {desktopBridge
+                    ? "more Code will restart the local backend with Tailscale Serve enabled and ask Tailscale to proxy HTTPS traffic to this backend."
+                    : "more Code will enable Tailscale Serve and ask Tailscale to proxy HTTPS traffic to this backend."}
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel className="space-y-4">
@@ -3123,7 +3132,7 @@ export function ConnectionsSettings() {
                   {isUpdatingTailscaleServe ? (
                     <>
                       <Spinner className="size-3.5" />
-                      Restarting…
+                      {desktopBridge ? "Restarting…" : "Applying…"}
                     </>
                   ) : (
                     "Enable"

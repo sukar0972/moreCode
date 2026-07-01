@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 
 import { ServerConfig } from "../config.ts";
 import { resolveSessionCookieName } from "./utils.ts";
-import { isLoopbackHost, isWildcardHost } from "../startupAccess.ts";
+import { isRemoteReachableHost } from "../startupAccess.ts";
 
 export interface EnvironmentAuthPolicyShape {
   readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
@@ -18,7 +18,7 @@ export class EnvironmentAuthPolicy extends Context.Service<
 
 export const make = Effect.fn("makeEnvironmentAuthPolicy")(function* () {
   const config = yield* ServerConfig;
-  const isRemoteReachable = isWildcardHost(config.host) || !isLoopbackHost(config.host);
+  const isRemoteReachable = isRemoteReachableHost(config.host);
 
   const policy =
     config.mode === "desktop"

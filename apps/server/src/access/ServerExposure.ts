@@ -23,10 +23,9 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { ServerConfig } from "../config.ts";
 import {
   formatHostForUrl,
-  isLoopbackHost,
-  isWildcardHost,
-  resolveLanConnectionHost,
+  isRemoteReachableHost,
   resolveListeningPort,
+  resolveServerAdvertisedHost,
 } from "../startupAccess.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
 
@@ -44,24 +43,6 @@ interface TailscaleServeState {
   readonly port: number;
 }
 
-function normalizeHost(host: string): string {
-  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-}
-
-function isNetworkAccessibleHost(host: string | undefined): boolean {
-  return host === undefined || isWildcardHost(host) || !isLoopbackHost(host);
-}
-
-function resolveAdvertisedHost(host: string | undefined): string | null {
-  if (!isNetworkAccessibleHost(host)) {
-    return null;
-  }
-  if (host && !isWildcardHost(host)) {
-    return normalizeHost(host);
-  }
-  return resolveLanConnectionHost() ?? null;
-}
-
 function resolveEndpointUrl(host: string | null, port: number): string | null {
   return host ? `http://${formatHostForUrl(host)}:${port}` : null;
 }
@@ -75,10 +56,10 @@ function makeState(input: {
   readonly port: number;
   readonly tailscale: TailscaleServeState;
 }): ServerExposureState {
-  const advertisedHost = resolveAdvertisedHost(input.host);
+  const advertisedHost = resolveServerAdvertisedHost(input.host);
   const endpointUrl = resolveEndpointUrl(advertisedHost, input.port);
   return {
-    mode: isNetworkAccessibleHost(input.host) ? "network-accessible" : "local-only",
+    mode: isRemoteReachableHost(input.host) ? "network-accessible" : "local-only",
     endpointUrl,
     advertisedHost,
     tailscaleServeEnabled: input.tailscale.enabled,
@@ -132,10 +113,6 @@ function resolveCoreAdvertisedEndpoints(input: {
   return endpoints;
 }
 
-function localHostForTailscaleServe(host: string | undefined): string {
-  return host && !isWildcardHost(host) ? normalizeHost(host) : SERVER_LOOPBACK_HOST;
-}
-
 export class ServerExposure extends Context.Service<
   ServerExposure,
   {
@@ -160,13 +137,41 @@ export const make = Effect.fn("makeServerExposure")(function* () {
     enabled: config.tailscaleServeEnabled,
     port: config.tailscaleServePort,
   });
-  const runtimeManagedTailscaleServeRef = yield* Ref.make(false);
 
   const readMagicDnsName: Effect.Effect<string | null, never, never> = readTailscaleStatus.pipe(
     Effect.map((status) => status.magicDnsName),
     Effect.orElseSucceed(() => null),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
   );
+
+  if (config.tailscaleServeEnabled) {
+    yield* ensureTailscaleServe({
+      localPort: port,
+      servePort: config.tailscaleServePort,
+      localHost: SERVER_LOOPBACK_HOST,
+    }).pipe(
+      Effect.tap(() =>
+        Effect.logInfo("Tailscale Serve configured", {
+          localPort: port,
+          servePort: config.tailscaleServePort,
+        }),
+      ),
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Failed to configure Tailscale Serve", {
+            cause,
+            localPort: port,
+            servePort: config.tailscaleServePort,
+          });
+          yield* Ref.set(tailscaleRef, {
+            enabled: false,
+            port: config.tailscaleServePort,
+          });
+        }),
+      ),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+    );
+  }
 
   const getState = Ref.get(tailscaleRef).pipe(
     Effect.map((tailscale) => makeState({ host: config.host, port, tailscale })),
@@ -202,13 +207,12 @@ export const make = Effect.fn("makeServerExposure")(function* () {
   ) {
     const current = yield* Ref.get(tailscaleRef);
     const servePort = input.port ?? current.port;
-    const localHost = localHostForTailscaleServe(config.host);
 
     if (input.enabled) {
       yield* ensureTailscaleServe({
         localPort: port,
         servePort,
-        localHost,
+        localHost: SERVER_LOOPBACK_HOST,
       }).pipe(
         Effect.mapError(
           (cause) =>
@@ -220,7 +224,6 @@ export const make = Effect.fn("makeServerExposure")(function* () {
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       );
-      yield* Ref.set(runtimeManagedTailscaleServeRef, true);
     } else {
       yield* disableTailscaleServe({ servePort }).pipe(
         Effect.mapError(
@@ -233,7 +236,6 @@ export const make = Effect.fn("makeServerExposure")(function* () {
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       );
-      yield* Ref.set(runtimeManagedTailscaleServeRef, false);
     }
 
     const tailscale = { enabled: input.enabled, port: servePort };
@@ -242,29 +244,22 @@ export const make = Effect.fn("makeServerExposure")(function* () {
   });
 
   yield* Effect.addFinalizer(() =>
-    Ref.get(runtimeManagedTailscaleServeRef).pipe(
-      Effect.flatMap((isRuntimeManaged) =>
-        isRuntimeManaged
-          ? Ref.get(tailscaleRef).pipe(
-              Effect.flatMap((tailscale) =>
-                disableTailscaleServe({ servePort: tailscale.port }).pipe(
-                  Effect.tap(() =>
-                    Effect.logInfo("Runtime-managed Tailscale Serve disabled", {
-                      servePort: tailscale.port,
-                    }),
-                  ),
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Failed to disable runtime-managed Tailscale Serve", {
-                      cause,
-                      servePort: tailscale.port,
-                    }),
-                  ),
-                  Effect.provideService(
-                    ChildProcessSpawner.ChildProcessSpawner,
-                    childProcessSpawner,
-                  ),
-                ),
+    Ref.get(tailscaleRef).pipe(
+      Effect.flatMap((tailscale) =>
+        tailscale.enabled
+          ? disableTailscaleServe({ servePort: tailscale.port }).pipe(
+              Effect.tap(() =>
+                Effect.logInfo("Tailscale Serve disabled", {
+                  servePort: tailscale.port,
+                }),
               ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to disable Tailscale Serve", {
+                  cause,
+                  servePort: tailscale.port,
+                }),
+              ),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
             )
           : Effect.void,
       ),
