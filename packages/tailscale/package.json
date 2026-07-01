@@ -6,6 +6,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./testing": {
+      "types": "./src/childProcessSpawnerTestHelpers.ts",
+      "import": "./src/childProcessSpawnerTestHelpers.ts"
     }
   },
   "scripts": {

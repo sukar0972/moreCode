@@ -56,6 +56,8 @@ import type {
 } from "./terminal.ts";
 import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
 import * as Schema from "effect/Schema";
+
+import { PortSchema } from "./baseSchemas.ts";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -368,7 +370,7 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
   endpointUrl: Schema.NullOr(Schema.String),
   advertisedHost: Schema.NullOr(Schema.String),
   tailscaleServeEnabled: Schema.Boolean,
-  tailscaleServePort: Schema.Number,
+  tailscaleServePort: PortSchema,
 });
 
 export interface PickFolderOptions {
