@@ -1,53 +1,24 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
-import * as Sink from "effect/Sink";
 import { HttpClient, HttpServer } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { mockChildProcessSpawnerLayer } from "@t3tools/tailscale/testing";
 
 import { ServerConfig, type ServerConfigShape } from "../config.ts";
 import { ServerExposure, layer as ServerExposureLayer } from "./ServerExposure.ts";
 
-const encoder = new TextEncoder();
+const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100"]}}`;
 
-function mockHandle(result: {
-  readonly stdout?: string;
-  readonly stderr?: string;
-  readonly code?: number;
-}) {
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(1),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
-    isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
-    unref: Effect.succeed(Effect.void),
-    stdin: Sink.drain,
-    stdout: Stream.make(encoder.encode(result.stdout ?? "")),
-    stderr: Stream.make(encoder.encode(result.stderr ?? "")),
-    all: Stream.empty,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-  });
-}
+type SpawnerHandler = (
+  command: string,
+  args: ReadonlyArray<string>,
+) => { stdout?: string; stderr?: string; code?: number };
 
 function makeSpawnerLayer(
   commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>,
+  handler: SpawnerHandler = () => ({}),
 ) {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const childProcess = command as unknown as {
-        readonly command: string;
-        readonly args: ReadonlyArray<string>;
-      };
-      commands.push({
-        command: childProcess.command,
-        args: childProcess.args,
-      });
-      return Effect.succeed(mockHandle({}));
-    }),
-  );
+  return mockChildProcessSpawnerLayer(handler, { commands });
 }
 
 function makeHttpServerLayer(port: number) {
@@ -120,13 +91,21 @@ function makeLayer(input: {
   readonly config?: Partial<ServerConfigShape>;
   readonly port?: number;
   readonly commands?: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
+  readonly spawnerHandler?: SpawnerHandler;
 }) {
   return ServerExposureLayer.pipe(
     Layer.provide(makeConfigLayer(input.config ?? {})),
     Layer.provide(makeHttpServerLayer(input.port ?? 3773)),
-    Layer.provide(makeSpawnerLayer(input.commands ?? [])),
+    Layer.provide(makeSpawnerLayer(input.commands ?? [], input.spawnerHandler)),
     Layer.provide(makeHttpClientLayer()),
   );
+}
+
+function tailscaleStatusHandler(command: string, args: ReadonlyArray<string>) {
+  if (command === "tailscale" && args[0] === "status") {
+    return { stdout: tailscaleStatusJson };
+  }
+  return {};
 }
 
 describe("ServerExposure", () => {
@@ -208,29 +187,115 @@ describe("ServerExposure", () => {
     },
   );
 
-  it.effect("uses loopback as the Tailscale Serve target even when the server binds to LAN", () => {
-    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+  it.effect("reports Tailscale Serve disabled when startup configure fails", () => {
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+      [];
 
-    return Effect.gen(function* () {
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const exposure = yield* ServerExposure;
+        const state = yield* exposure.getState;
+
+        expect(state).toMatchObject({
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 8443,
+        });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            port: 13773,
+            commands,
+            config: {
+              tailscaleServeEnabled: true,
+              tailscaleServePort: 8443,
+            },
+            spawnerHandler: () => ({ code: 1, stderr: "tailscale: command not found" }),
+          }),
+        ),
+      ),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(commands).toEqual([
+            {
+              command: "tailscale",
+              args: ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"],
+            },
+          ]);
+        }),
+      ),
+    );
+  });
+
+  it.effect("composes core and Tailscale advertised endpoints", () =>
+    Effect.gen(function* () {
       const exposure = yield* ServerExposure;
-      const state = yield* exposure.setTailscaleServeEnabled({
-        enabled: true,
-        port: 9443,
-      });
+      const endpoints = yield* exposure.getAdvertisedEndpoints;
 
-      expect(state.tailscaleServeEnabled).toBe(true);
-      expect(commands[0]).toEqual({
-        command: "tailscale",
-        args: ["serve", "--bg", "--https=9443", "http://127.0.0.1:13773"],
+      expect(endpoints.map((endpoint) => endpoint.httpBaseUrl)).toContain(
+        "http://127.0.0.1:3773/",
+      );
+      expect(endpoints.some((endpoint) => endpoint.label === "This machine")).toBe(true);
+      expect(endpoints.some((endpoint) => endpoint.label === "Tailscale HTTPS")).toBe(true);
+      expect(
+        endpoints.find((endpoint) => endpoint.label === "Tailscale HTTPS"),
+      ).toMatchObject({
+        httpBaseUrl: "https://desktop.tail.ts.net/",
+        status: "unavailable",
       });
     }).pipe(
       Effect.provide(
         makeLayer({
-          port: 13773,
-          commands,
-          config: {
-            host: "192.168.1.20",
-          },
+          port: 3773,
+          spawnerHandler: tailscaleStatusHandler,
+        }),
+      ),
+    ),
+  );
+
+  it.effect("uses loopback as the Tailscale Serve target even when the server binds to LAN", () => {
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const exposure = yield* ServerExposure;
+        const state = yield* exposure.setTailscaleServeEnabled({
+          enabled: true,
+          port: 9443,
+        });
+
+        expect(state).toMatchObject({
+          tailscaleServeEnabled: true,
+          tailscaleServePort: 9443,
+        });
+        expect(commands[0]).toEqual({
+          command: "tailscale",
+          args: ["serve", "--bg", "--https=9443", "http://127.0.0.1:13773"],
+        });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            port: 13773,
+            commands,
+            config: {
+              host: "192.168.1.20",
+            },
+          }),
+        ),
+      ),
+    ).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(commands).toEqual([
+            {
+              command: "tailscale",
+              args: ["serve", "--bg", "--https=9443", "http://127.0.0.1:13773"],
+            },
+            {
+              command: "tailscale",
+              args: ["serve", "--https=9443", "off"],
+            },
+          ]);
         }),
       ),
     );

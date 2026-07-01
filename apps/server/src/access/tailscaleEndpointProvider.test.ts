@@ -79,6 +79,29 @@ describe("tailscaleEndpointProvider", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("marks MagicDNS HTTPS unavailable when Serve is enabled but the probe fails", () =>
+    Effect.gen(function* () {
+      const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
+        port: 3773,
+        includeIpEndpoints: false,
+        serveEnabled: true,
+        servePort: 443,
+        networkInterfaces: {},
+        statusJson: tailscaleStatusJson,
+        probe: () => Effect.succeed(false),
+      });
+
+      expect(endpoints).toHaveLength(1);
+      expect(endpoints[0]).toMatchObject({
+        httpBaseUrl: "https://desktop.tail.ts.net/",
+        status: "unavailable",
+        compatibility: {
+          hostedHttpsApp: "requires-configuration",
+        },
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("marks MagicDNS HTTPS available when Serve is enabled and the probe succeeds", () =>
     Effect.gen(function* () {
       const probedUrls: string[] = [];
