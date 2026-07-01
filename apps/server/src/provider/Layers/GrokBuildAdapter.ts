@@ -228,6 +228,15 @@ export function makeGrokBuildAdapter(
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingAcpUserInputsAsCancelled(ctx.pendingUserInputs);
+        ctx.interruptedTurnIds.clear();
+        ctx.activeTurnId = undefined;
+        ctx.promptsInFlight = 0;
+        const promptFibers = Array.from(ctx.promptFibers);
+        ctx.promptFibers.clear();
+        yield* Effect.forEach(promptFibers, (fiber) => Fiber.interrupt(fiber), {
+          discard: true,
+        });
+        yield* ctx.acp.cancel.pipe(Effect.ignore);
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }

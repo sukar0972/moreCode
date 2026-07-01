@@ -210,6 +210,7 @@ export function makeGrokBuildSendTurn(input: {
           });
         }
         if (context.interruptedTurnIds.has(prepared.turnId)) {
+          context.interruptedTurnIds.delete(prepared.turnId);
           return;
         }
 
@@ -261,6 +262,7 @@ export function makeGrokBuildSendTurn(input: {
           return;
         }
         if (context.interruptedTurnIds.has(prepared.turnId)) {
+          context.interruptedTurnIds.delete(prepared.turnId);
           return;
         }
         if (context.promptsInFlight === 1 && context.activeTurnId === prepared.turnId) {

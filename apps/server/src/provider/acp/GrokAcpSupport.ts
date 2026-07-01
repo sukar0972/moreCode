@@ -160,7 +160,11 @@ export const makeGrokBuildAcpRuntime = (
         return [
           Deferred.succeed(waiter, completed.response).pipe(
             Effect.tap(() =>
-              Ref.update(notificationResolvedWaitersRef, (resolved) => new Set([...resolved, waiter])),
+              Ref.update(notificationResolvedWaitersRef, (resolved) => {
+                const next = new Set(resolved);
+                next.add(waiter);
+                return next;
+              }),
             ),
             Effect.asVoid,
           ),

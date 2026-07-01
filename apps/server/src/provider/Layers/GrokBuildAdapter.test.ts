@@ -618,6 +618,66 @@ grokPromptCompleteAdapterTestLayer("GrokBuildAdapter xAI prompt completion", (it
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("completes a later turn after prompt_complete settlement", () =>
+    Effect.gen(function* () {
+      const adapter = yield* GrokBuildAdapter;
+      const threadId = ThreadId.make("grok-prompt-complete-next-turn-thread");
+      const completedFiber = yield* Stream.take(adapter.streamEvents, 40).pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok-build"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok-build-test"),
+          model: "default",
+        },
+      });
+
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "complete through xai notification",
+        attachments: [],
+      });
+
+      const nextTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "plain follow-up after prompt_complete",
+        attachments: [],
+      });
+
+      const completedEvents = Array.from(yield* Fiber.join(completedFiber));
+      assert.equal(completedEvents.length, 2);
+      const [firstCompleted, secondCompleted] = completedEvents;
+      assert.equal(firstCompleted?.type, "turn.completed");
+      assert.equal(secondCompleted?.type, "turn.completed");
+      if (firstCompleted?.type === "turn.completed") {
+        assert.equal(firstCompleted.turnId, firstTurn.turnId);
+        assert.equal(firstCompleted.payload.state, "completed");
+        assert.equal(firstCompleted.payload.stopReason, "end_turn");
+      }
+      if (secondCompleted?.type === "turn.completed") {
+        assert.equal(secondCompleted.turnId, nextTurn.turnId);
+        assert.equal(secondCompleted.payload.state, "completed");
+        assert.equal(secondCompleted.payload.stopReason, "end_turn");
+      }
+
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      assert.equal(session?.status, "ready");
+      assert.isUndefined(session?.activeTurnId);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });
 
 const grokStopTestState: { exitLogPath?: string } = {};
