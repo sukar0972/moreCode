@@ -75,7 +75,7 @@ export const ServerExposureState = Schema.Struct({
   endpointUrl: Schema.NullOr(Schema.String),
   advertisedHost: Schema.NullOr(Schema.String),
   tailscaleServeEnabled: Schema.Boolean,
-  tailscaleServePort: Schema.Number,
+  tailscaleServePort: PortSchema,
 });
 export type ServerExposureState = typeof ServerExposureState.Type;
 
