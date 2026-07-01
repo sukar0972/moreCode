@@ -137,6 +137,7 @@ import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as ServerExposure from "./access/ServerExposure.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -642,6 +643,29 @@ const buildAppUnderTest = (options?: {
               error: Option.none(),
             }),
         }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ServerExposure.ServerExposure,
+          ServerExposure.ServerExposure.of({
+            getState: Effect.succeed({
+              mode: "local-only",
+              endpointUrl: null,
+              advertisedHost: null,
+              tailscaleServeEnabled: false,
+              tailscaleServePort: 443,
+            }),
+            getAdvertisedEndpoints: Effect.succeed([]),
+            setTailscaleServeEnabled: (input) =>
+              Effect.succeed({
+                mode: "local-only",
+                endpointUrl: null,
+                advertisedHost: null,
+                tailscaleServeEnabled: input.enabled,
+                tailscaleServePort: input.port ?? 443,
+              }),
+          }),
+        ),
       ),
       Layer.provide(gitManagerLayer),
       Layer.provide(gitVcsDriverLayer),

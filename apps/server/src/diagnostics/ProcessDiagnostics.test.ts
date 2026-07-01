@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
@@ -257,6 +259,51 @@ describe("ProcessDiagnostics", () => {
         `Process diagnostics query 'ps' failed with exit code 17 in '${process.cwd()}'.`,
       );
     }),
+  );
+
+  it.effect("returns the timeout message when the process query does not finish", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.sleep("2 seconds").pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+      );
+
+      const fiber = yield* ProcessDiagnostics.readProcessRows.pipe(
+        Effect.provide(spawnerLayer),
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      const error = yield* Fiber.join(fiber);
+
+      expect(error).toMatchObject({
+        _tag: "ProcessDiagnosticsQueryTimeoutError",
+        command: "ps",
+        argCount: 2,
+        cwd: process.cwd(),
+        timeoutMillis: 1_000,
+      });
+      expect(error.message).toBe(
+        `Process diagnostics query 'ps' timed out after 1000ms in '${process.cwd()}'.`,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not allow signaling the diagnostics query process", () =>

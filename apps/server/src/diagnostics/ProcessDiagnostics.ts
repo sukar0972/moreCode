@@ -53,10 +53,22 @@ class ProcessDiagnosticsQueryTimeoutError extends Schema.TaggedErrorClass<Proces
     cwd: Schema.String,
     timeoutMillis: Schema.Number,
   },
-) {
-  override get message(): string {
-    return `Process diagnostics query '${this.command}' timed out after ${this.timeoutMillis}ms in '${this.cwd}'.`;
-  }
+) {}
+
+function makeProcessDiagnosticsQueryTimeoutError(fields: {
+  readonly command: string;
+  readonly argCount: number;
+  readonly cwd: string;
+  readonly timeoutMillis: number;
+}): ProcessDiagnosticsQueryTimeoutError {
+  const error = new ProcessDiagnosticsQueryTimeoutError(fields);
+  Object.defineProperty(error, "message", {
+    value: `Process diagnostics query '${error.command}' timed out after ${error.timeoutMillis}ms in '${error.cwd}'.`,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+  return error;
 }
 
 class ProcessDiagnosticsQueryFailedError extends Schema.TaggedErrorClass<ProcessDiagnosticsQueryFailedError>()(
@@ -409,7 +421,7 @@ const runProcess = Effect.fn("runProcess")(function* (input: {
       Option.match(result, {
         onNone: () =>
           Effect.fail(
-            new ProcessDiagnosticsQueryTimeoutError({
+            makeProcessDiagnosticsQueryTimeoutError({
               command: input.command,
               argCount: input.args.length,
               cwd,

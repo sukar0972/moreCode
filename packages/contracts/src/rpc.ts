@@ -43,6 +43,12 @@ import {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
+import {
+  AdvertisedEndpoint,
+  ServerExposureError,
+  ServerExposureState,
+  ServerTailscaleServeInput,
+} from "./remoteAccess.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
   ClientOrchestrationCommand,
@@ -174,6 +180,9 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+  serverGetExposureState: "server.getExposureState",
+  serverGetAdvertisedEndpoints: "server.getAdvertisedEndpoints",
+  serverSetTailscaleServeEnabled: "server.setTailscaleServeEnabled",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -275,6 +284,27 @@ export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
 });
+
+export const WsServerGetExposureStateRpc = Rpc.make(WS_METHODS.serverGetExposureState, {
+  payload: Schema.Struct({}),
+  success: ServerExposureState,
+  error: Schema.Union([ServerExposureError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerGetAdvertisedEndpointsRpc = Rpc.make(WS_METHODS.serverGetAdvertisedEndpoints, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AdvertisedEndpoint),
+  error: Schema.Union([ServerExposureError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerSetTailscaleServeEnabledRpc = Rpc.make(
+  WS_METHODS.serverSetTailscaleServeEnabled,
+  {
+    payload: ServerTailscaleServeInput,
+    success: ServerExposureState,
+    error: Schema.Union([ServerExposureError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
   payload: Schema.Struct({}),
@@ -568,6 +598,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
+  WsServerGetExposureStateRpc,
+  WsServerGetAdvertisedEndpointsRpc,
+  WsServerSetTailscaleServeEnabledRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

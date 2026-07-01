@@ -39,6 +39,22 @@ export const isLoopbackHost = (host: string | undefined): boolean => {
 export const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
 
+export const isRemoteReachableHost = (host: string | undefined): boolean =>
+  isWildcardHost(host) || !isLoopbackHost(host);
+
+export const resolveServerAdvertisedHost = (
+  host: string | undefined,
+  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
+): string | null => {
+  if (!isRemoteReachableHost(host)) {
+    return null;
+  }
+  if (host && !isWildcardHost(host)) {
+    return normalizeHost(host);
+  }
+  return resolveLanConnectionHost(interfaces) ?? null;
+};
+
 export const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 

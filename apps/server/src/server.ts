@@ -77,6 +77,7 @@ import * as CloudCliState from "./cloud/CliState.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as ServerExposure from "./access/ServerExposure.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -86,7 +87,7 @@ import {
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -376,57 +377,6 @@ export const makeServerLayer = Layer.unwrap(
         () => clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
       ),
     );
-    const tailscaleServeLayer = config.tailscaleServeEnabled
-      ? Layer.effectDiscard(
-          Effect.acquireRelease(
-            Effect.gen(function* () {
-              const server = yield* HttpServer.HttpServer;
-              const address = server.address;
-              if (typeof address === "string" || !("port" in address)) {
-                return null;
-              }
-
-              const localPort = address.port;
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost: "127.0.0.1",
-              }).pipe(
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
-                ),
-              );
-            }),
-            (configured) =>
-              configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                    Effect.tap(() =>
-                      Effect.logInfo("Tailscale Serve disabled", {
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to disable Tailscale Serve", {
-                        cause,
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                  )
-                : Effect.void,
-          ),
-        )
-      : Layer.empty;
     const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         if (!hasCloudPublicConfig) return;
@@ -455,12 +405,12 @@ export const makeServerLayer = Layer.unwrap(
       }),
       httpListeningLayer,
       runtimeStateLayer,
-      tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
     );
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),
+      Layer.provideMerge(ServerExposure.layer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ObservabilityLive),

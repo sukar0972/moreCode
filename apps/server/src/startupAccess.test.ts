@@ -4,6 +4,7 @@ import {
   buildPairingUrl,
   formatHeadlessServeOutput,
   formatStartupAccessOutput,
+  isRemoteReachableHost,
   renderTerminalQrCode,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
@@ -11,11 +12,41 @@ import {
   resolveLanConnectionString,
   resolveListeningPort,
   resolveLocalConnectionString,
+  resolveServerAdvertisedHost,
 } from "./startupAccess.ts";
 
 it("prefers localhost when no explicit host is configured", () => {
   expect(resolveHeadlessConnectionHost(undefined)).toBe("localhost");
   expect(resolveHeadlessConnectionString(undefined, 3773)).toBe("http://localhost:3773");
+});
+
+it("treats undefined and loopback hosts as local-only for remote reachability", () => {
+  expect(isRemoteReachableHost(undefined)).toBe(false);
+  expect(isRemoteReachableHost("127.0.0.1")).toBe(false);
+  expect(isRemoteReachableHost("localhost")).toBe(false);
+  expect(isRemoteReachableHost("0.0.0.0")).toBe(true);
+  expect(isRemoteReachableHost("192.168.1.42")).toBe(true);
+});
+
+it("resolves server advertised hosts only when the bind address is remote-reachable", () => {
+  const interfaces = {
+    en0: [
+      {
+        address: "192.168.1.42",
+        netmask: "255.255.255.0",
+        family: "IPv4" as const,
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "192.168.1.42/24",
+        scopeid: 0,
+      },
+    ],
+  };
+
+  expect(resolveServerAdvertisedHost(undefined, interfaces)).toBe(null);
+  expect(resolveServerAdvertisedHost("127.0.0.1", interfaces)).toBe(null);
+  expect(resolveServerAdvertisedHost("192.168.1.10", interfaces)).toBe("192.168.1.10");
+  expect(resolveServerAdvertisedHost("0.0.0.0", interfaces)).toBe("192.168.1.42");
 });
 
 it("keeps explicit bind hosts in the connection string", () => {
@@ -76,7 +107,7 @@ it("resolves a LAN connection string from the first external IPv4 interface", ()
       {
         address: "192.168.1.42",
         netmask: "255.255.255.0",
-        family: "IPv4",
+        family: "IPv4" as const,
         mac: "00:00:00:00:00:00",
         internal: false,
         cidr: "192.168.1.42/24",
