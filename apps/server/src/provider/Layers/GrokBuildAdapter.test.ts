@@ -388,7 +388,10 @@ const grokPermissionAdapterTestLayer = it.layer(
     GrokBuildAdapter,
     Effect.gen(function* () {
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockAgentWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
+        makeMockAgentWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_EMIT_TOOL_CALLS_ON_PERMISSION_PHRASE: "1",
+        }),
       );
       const settings = decodeGrokBuildSettings({
         enabled: true,

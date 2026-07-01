@@ -320,20 +320,27 @@ export function makeGrokBuildSendTurn(input: {
         );
       }).pipe(Effect.tapCause(() => releasePrompt(prepared)));
 
-      const promptFiber = yield* context.acp.prompt(payload).pipe(
-        Effect.tap((result) =>
-          input.logNative(request.threadId, "session/prompt(response)", result),
+      const promptFiber = yield* input.withThreadLock(
+        request.threadId,
+        context.acp.prompt(payload).pipe(
+          Effect.tap((result) =>
+            input.logNative(request.threadId, "session/prompt(response)", result),
+          ),
+          Effect.flatMap((result) => settleSuccess(request, prepared, result)),
+          Effect.catchCause(() => settleFailure(request, prepared)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              context.promptFibers.delete(promptFiber);
+            }).pipe(Effect.andThen(releasePrompt(prepared))),
+          ),
+          Effect.forkIn(context.scope),
+          Effect.tap((fiber) =>
+            Effect.sync(() => {
+              context.promptFibers.add(fiber);
+            }),
+          ),
         ),
-        Effect.flatMap((result) => settleSuccess(request, prepared, result)),
-        Effect.catchCause(() => settleFailure(request, prepared)),
-        Effect.ensuring(
-          Effect.sync(() => {
-            context.promptFibers.delete(promptFiber);
-          }).pipe(Effect.andThen(releasePrompt(prepared))),
-        ),
-        Effect.forkIn(context.scope),
       );
-      context.promptFibers.add(promptFiber);
 
       return {
         threadId: request.threadId,

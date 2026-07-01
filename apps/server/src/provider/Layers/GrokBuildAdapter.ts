@@ -705,7 +705,7 @@ export function makeGrokBuildAdapter(
             ctx.interruptedTurnIds.add(targetTurnId);
             yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
             yield* settlePendingAcpUserInputsAsCancelled(ctx.pendingUserInputs);
-            if (ctx.session.status === "running") {
+            if (shouldCancelActiveTurn) {
               ctx.activeTurnId = undefined;
               ctx.promptsInFlight = 0;
               const promptFibers = Array.from(ctx.promptFibers);

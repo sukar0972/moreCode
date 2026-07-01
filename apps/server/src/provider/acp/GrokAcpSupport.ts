@@ -133,6 +133,9 @@ export const makeGrokBuildAcpRuntime = (
     const promptCompleteWaitersRef = yield* Ref.make(
       new Map<string, ReadonlyArray<Deferred.Deferred<EffectAcpSchema.PromptResponse>>>(),
     );
+    const notificationResolvedWaitersRef = yield* Ref.make(
+      new Set<Deferred.Deferred<EffectAcpSchema.PromptResponse>>(),
+    );
 
     yield* runtime.handleUnknownExtNotification((method, payload) => {
       if (method !== "_x.ai/session/prompt_complete" && method !== "x.ai/session/prompt_complete") {
@@ -154,7 +157,15 @@ export const makeGrokBuildAcpRuntime = (
         } else {
           next.delete(completed.sessionId);
         }
-        return [Deferred.succeed(waiter, completed.response).pipe(Effect.asVoid), next] as const;
+        return [
+          Deferred.succeed(waiter, completed.response).pipe(
+            Effect.tap(() =>
+              Ref.update(notificationResolvedWaitersRef, (resolved) => new Set([...resolved, waiter])),
+            ),
+            Effect.asVoid,
+          ),
+          next,
+        ] as const;
       }).pipe(Effect.flatten);
     });
 
@@ -183,6 +194,7 @@ export const makeGrokBuildAcpRuntime = (
           return yield* runtime.prompt(payload);
         }
         const waiter = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        // xAI prompt_complete notifications carry no turn id; waiters are FIFO per session.
         yield* Ref.update(promptCompleteWaitersRef, (waiters) => {
           const next = new Map(waiters);
           next.set(sessionId, [...(next.get(sessionId) ?? []), waiter]);
@@ -190,19 +202,32 @@ export const makeGrokBuildAcpRuntime = (
         });
         return yield* Effect.raceFirst(runtime.prompt(payload), Deferred.await(waiter)).pipe(
           Effect.ensuring(
-            Ref.update(promptCompleteWaitersRef, (waiters) => {
-              const sessionWaiters = waiters.get(sessionId);
-              if (!sessionWaiters?.includes(waiter)) {
-                return waiters;
+            Effect.gen(function* () {
+              const completedViaNotification = (yield* Ref.get(notificationResolvedWaitersRef)).has(
+                waiter,
+              );
+              if (completedViaNotification) {
+                yield* Ref.update(notificationResolvedWaitersRef, (resolved) => {
+                  const next = new Set(resolved);
+                  next.delete(waiter);
+                  return next;
+                });
+                yield* runtime.cancel().pipe(Effect.ignore);
               }
-              const remainingWaiters = sessionWaiters.filter((candidate) => candidate !== waiter);
-              const next = new Map(waiters);
-              if (remainingWaiters.length > 0) {
-                next.set(sessionId, remainingWaiters);
-              } else {
-                next.delete(sessionId);
-              }
-              return next;
+              yield* Ref.update(promptCompleteWaitersRef, (waiters) => {
+                const sessionWaiters = waiters.get(sessionId);
+                if (!sessionWaiters?.includes(waiter)) {
+                  return waiters;
+                }
+                const remainingWaiters = sessionWaiters.filter((candidate) => candidate !== waiter);
+                const next = new Map(waiters);
+                if (remainingWaiters.length > 0) {
+                  next.set(sessionId, remainingWaiters);
+                } else {
+                  next.delete(sessionId);
+                }
+                return next;
+              });
             }),
           ),
         );
