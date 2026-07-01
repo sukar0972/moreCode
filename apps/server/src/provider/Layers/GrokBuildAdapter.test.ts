@@ -623,9 +623,9 @@ grokPromptCompleteAdapterTestLayer("GrokBuildAdapter xAI prompt completion", (it
     Effect.gen(function* () {
       const adapter = yield* GrokBuildAdapter;
       const threadId = ThreadId.make("grok-prompt-complete-next-turn-thread");
-      const completedFiber = yield* Stream.take(adapter.streamEvents, 40).pipe(
+      const firstCompletedFiber = yield* Stream.take(adapter.streamEvents, 40).pipe(
         Stream.filter((event) => event.type === "turn.completed"),
-        Stream.take(2),
+        Stream.take(1),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -647,22 +647,31 @@ grokPromptCompleteAdapterTestLayer("GrokBuildAdapter xAI prompt completion", (it
         attachments: [],
       });
 
+      const firstCompletedEvents = Array.from(yield* Fiber.join(firstCompletedFiber));
+      const firstCompleted = firstCompletedEvents[0];
+      assert.equal(firstCompleted?.type, "turn.completed");
+      if (firstCompleted?.type === "turn.completed") {
+        assert.equal(firstCompleted.turnId, firstTurn.turnId);
+        assert.equal(firstCompleted.payload.state, "completed");
+        assert.equal(firstCompleted.payload.stopReason, "end_turn");
+      }
+
+      const secondCompletedFiber = yield* Stream.take(adapter.streamEvents, 40).pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
       const nextTurn = yield* adapter.sendTurn({
         threadId,
         input: "plain follow-up after prompt_complete",
         attachments: [],
       });
 
-      const completedEvents = Array.from(yield* Fiber.join(completedFiber));
-      assert.equal(completedEvents.length, 2);
-      const [firstCompleted, secondCompleted] = completedEvents;
-      assert.equal(firstCompleted?.type, "turn.completed");
+      const secondCompletedEvents = Array.from(yield* Fiber.join(secondCompletedFiber));
+      const secondCompleted = secondCompletedEvents[0];
       assert.equal(secondCompleted?.type, "turn.completed");
-      if (firstCompleted?.type === "turn.completed") {
-        assert.equal(firstCompleted.turnId, firstTurn.turnId);
-        assert.equal(firstCompleted.payload.state, "completed");
-        assert.equal(firstCompleted.payload.stopReason, "end_turn");
-      }
       if (secondCompleted?.type === "turn.completed") {
         assert.equal(secondCompleted.turnId, nextTurn.turnId);
         assert.equal(secondCompleted.payload.state, "completed");
