@@ -1,5 +1,7 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -27,13 +29,33 @@ const XAiWrappedAskUserQuestionParams = Schema.Struct({
   params: XAiAskUserQuestionParams,
 });
 
+const XAiPromptCompleteParams = Schema.Struct({
+  sessionId: Schema.String,
+  stopReason: Schema.optional(
+    Schema.NullOr(
+      Schema.Literals(["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"]),
+    ),
+  ),
+});
+
+const XAiWrappedPromptCompleteParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/session/prompt_complete", "_x.ai/session/prompt_complete"]),
+  params: XAiPromptCompleteParams,
+});
+
 export const XAiAskUserQuestionRequest = Schema.Union([
   XAiAskUserQuestionParams,
   XAiWrappedAskUserQuestionParams,
 ]);
+export const XAiPromptCompleteRequest = Schema.Union([
+  XAiPromptCompleteParams,
+  XAiWrappedPromptCompleteParams,
+]);
 
 type XAiAskUserQuestionRequestParams = typeof XAiAskUserQuestionParams.Type;
 type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;
+type XAiPromptCompleteRequest = typeof XAiPromptCompleteRequest.Type;
+const decodeXAiPromptCompleteRequest = Schema.decodeUnknownOption(XAiPromptCompleteRequest);
 const EMPTY_OPTIONS_CONTINUE_FALLBACK = [{ label: "OK", description: "Continue" }] as const;
 
 function trimmed(value: string | undefined): string | undefined {
@@ -45,6 +67,31 @@ function unwrapAskUserQuestionParams(
   params: XAiAskUserQuestionRequest,
 ): XAiAskUserQuestionRequestParams {
   return "params" in params ? params.params : params;
+}
+
+function unwrapPromptCompleteParams(
+  params: XAiPromptCompleteRequest,
+): typeof XAiPromptCompleteParams.Type {
+  return "params" in params ? params.params : params;
+}
+
+export function parseXAiPromptCompleteResponse(input: unknown):
+  | {
+      readonly sessionId: string;
+      readonly response: EffectAcpSchema.PromptResponse;
+    }
+  | undefined {
+  const decoded = decodeXAiPromptCompleteRequest(input);
+  if (Option.isNone(decoded)) {
+    return undefined;
+  }
+  const params = unwrapPromptCompleteParams(decoded.value);
+  return {
+    sessionId: params.sessionId,
+    response: {
+      stopReason: params.stopReason ?? "end_turn",
+    },
+  };
 }
 
 export function extractXAiAskUserQuestions(

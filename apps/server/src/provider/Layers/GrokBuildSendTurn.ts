@@ -8,6 +8,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -40,6 +41,8 @@ export interface GrokBuildSendTurnContext {
   readonly promptCapabilities: GrokAcpPromptCapabilities;
   readonly turns: Array<GrokBuildTurnRecord>;
   activeTurnId: TurnId | undefined;
+  readonly interruptedTurnIds: Set<TurnId>;
+  readonly promptFibers: Set<Fiber.Fiber<void | undefined, ProviderAdapterError>>;
   lastPlanFingerprint: string | undefined;
   readonly currentModelId: string | undefined;
   promptsInFlight: number;
@@ -89,7 +92,12 @@ export function makeGrokBuildSendTurn(input: {
       context.promptsInFlight = Math.max(0, context.promptsInFlight - 1);
     });
   const releasePrompt = (prepared: PreparedGrokBuildPrompt) =>
-    releaseContextPrompt(prepared.context);
+    Effect.sync(() => {
+      if (prepared.context.interruptedTurnIds.has(prepared.turnId)) {
+        return;
+      }
+      prepared.context.promptsInFlight = Math.max(0, prepared.context.promptsInFlight - 1);
+    });
 
   const preparePrompt = (request: Parameters<GrokBuildSendTurn>[0]) =>
     input.withThreadLock(
@@ -201,6 +209,10 @@ export function makeGrokBuildSendTurn(input: {
             detail: "Grok Build session changed before the turn completed.",
           });
         }
+        if (context.interruptedTurnIds.has(prepared.turnId)) {
+          context.interruptedTurnIds.delete(prepared.turnId);
+          return;
+        }
 
         const existingTurnRecord = context.turns.find((turn) => turn.id === prepared.turnId);
         const item = { prompt: prepared.promptBlocks, result };
@@ -247,6 +259,10 @@ export function makeGrokBuildSendTurn(input: {
       Effect.gen(function* () {
         const context = yield* input.requireSession(request.threadId);
         if (context !== prepared.context) {
+          return;
+        }
+        if (context.interruptedTurnIds.has(prepared.turnId)) {
+          context.interruptedTurnIds.delete(prepared.turnId);
           return;
         }
         if (context.promptsInFlight === 1 && context.activeTurnId === prepared.turnId) {
@@ -306,14 +322,26 @@ export function makeGrokBuildSendTurn(input: {
         );
       }).pipe(Effect.tapCause(() => releasePrompt(prepared)));
 
-      yield* context.acp.prompt(payload).pipe(
-        Effect.tap((result) =>
-          input.logNative(request.threadId, "session/prompt(response)", result),
+      const promptFiber = yield* input.withThreadLock(
+        request.threadId,
+        context.acp.prompt(payload).pipe(
+          Effect.tap((result) =>
+            input.logNative(request.threadId, "session/prompt(response)", result),
+          ),
+          Effect.flatMap((result) => settleSuccess(request, prepared, result)),
+          Effect.catchCause(() => settleFailure(request, prepared)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              context.promptFibers.delete(promptFiber);
+            }).pipe(Effect.andThen(releasePrompt(prepared))),
+          ),
+          Effect.forkIn(context.scope),
+          Effect.tap((fiber) =>
+            Effect.sync(() => {
+              context.promptFibers.add(fiber);
+            }),
+          ),
         ),
-        Effect.flatMap((result) => settleSuccess(request, prepared, result)),
-        Effect.catchCause(() => settleFailure(request, prepared)),
-        Effect.ensuring(releasePrompt(prepared)),
-        Effect.forkIn(context.scope),
       );
 
       return {

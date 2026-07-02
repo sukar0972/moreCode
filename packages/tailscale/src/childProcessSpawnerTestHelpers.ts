@@ -46,7 +46,9 @@ export function mockChildProcessSpawnerLayer(
         command: childProcess.command,
         args: childProcess.args,
       });
-      return Effect.succeed(mockChildProcessHandle(handler(childProcess.command, childProcess.args)));
+      return Effect.succeed(
+        mockChildProcessHandle(handler(childProcess.command, childProcess.args)),
+      );
     }),
   );
 }

@@ -188,8 +188,7 @@ describe("ServerExposure", () => {
   );
 
   it.effect("reports Tailscale Serve disabled when startup configure fails", () => {
-    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
-      [];
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -232,14 +231,10 @@ describe("ServerExposure", () => {
       const exposure = yield* ServerExposure;
       const endpoints = yield* exposure.getAdvertisedEndpoints;
 
-      expect(endpoints.map((endpoint) => endpoint.httpBaseUrl)).toContain(
-        "http://127.0.0.1:3773/",
-      );
+      expect(endpoints.map((endpoint) => endpoint.httpBaseUrl)).toContain("http://127.0.0.1:3773/");
       expect(endpoints.some((endpoint) => endpoint.label === "This machine")).toBe(true);
       expect(endpoints.some((endpoint) => endpoint.label === "Tailscale HTTPS")).toBe(true);
-      expect(
-        endpoints.find((endpoint) => endpoint.label === "Tailscale HTTPS"),
-      ).toMatchObject({
+      expect(endpoints.find((endpoint) => endpoint.label === "Tailscale HTTPS")).toMatchObject({
         httpBaseUrl: "https://desktop.tail.ts.net/",
         status: "unavailable",
       });
