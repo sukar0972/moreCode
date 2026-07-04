@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vite-plus/test/browser";
@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 const scrollToEndSpy = vi.fn();
+const scrollToIndexSpy = vi.fn();
 const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
+let lastLegendListProps: { maintainScrollAtEnd?: boolean } | null = null;
 
 vi.mock("@legendapp/list/react", async () => {
   const React = await import("react");
@@ -19,13 +21,16 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => React.ReactNode;
     ListHeaderComponent?: React.ReactNode;
     ListFooterComponent?: React.ReactNode;
+    maintainScrollAtEnd?: boolean;
     ref?: React.Ref<LegendListRef>;
   }) {
+    lastLegendListProps = props;
     React.useImperativeHandle(
       props.ref,
       () =>
         ({
           scrollToEnd: scrollToEndSpy,
+          scrollToIndex: scrollToIndexSpy,
           getState: getStateSpy,
         }) as unknown as LegendListRef,
     );
@@ -69,6 +74,7 @@ function buildProps() {
     resolvedTheme: "dark" as const,
     timestampFormat: "24-hour" as const,
     workspaceRoot: undefined,
+    anchorMessageId: null,
     onIsAtEndChange: vi.fn(),
   };
 }
@@ -97,7 +103,9 @@ function buildUserTimelineEntry(text: string) {
 describe("MessagesTimeline", () => {
   afterEach(() => {
     scrollToEndSpy.mockReset();
+    scrollToIndexSpy.mockReset();
     getStateSpy.mockClear();
+    lastLegendListProps = null;
     vi.restoreAllMocks();
     document.body.innerHTML = "";
   });
@@ -174,6 +182,46 @@ describe("MessagesTimeline", () => {
       expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
       expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
       expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("positions an anchored sent message without maintaining the live edge", async () => {
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(
+      (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+    );
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    const anchoredMessageId = MessageId.make("message-1");
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        anchorMessageId={anchoredMessageId}
+        timelineEntries={[
+          {
+            ...buildUserTimelineEntry("Ship the thing."),
+            message: {
+              ...buildUserTimelineEntry("Ship the thing.").message,
+              id: anchoredMessageId,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      expect(lastLegendListProps?.maintainScrollAtEnd).toBe(false);
+      expect(scrollToIndexSpy).toHaveBeenCalledWith({
+        index: 0,
+        animated: true,
+        viewPosition: 0,
+        viewOffset: 16,
+      });
     } finally {
       await screen.unmount();
     }

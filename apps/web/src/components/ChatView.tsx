@@ -1026,6 +1026,20 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const [timelineAnchor, setTimelineAnchor] = useState<{
+    readonly threadKey: string | null;
+    readonly messageId: MessageId | null;
+  }>({ threadKey: activeThreadKey, messageId: null });
+  const timelineAnchorMessageId =
+    timelineAnchor.threadKey === activeThreadKey ? timelineAnchor.messageId : null;
+
+  useEffect(() => {
+    setTimelineAnchor((existing) =>
+      existing.threadKey === activeThreadKey
+        ? existing
+        : { threadKey: activeThreadKey, messageId: null },
+    );
+  }, [activeThreadKey]);
 
   useEffect(() => {
     if (!activeThreadRef) {
@@ -1593,6 +1607,25 @@ export default function ChatView(props: ChatViewProps) {
   );
   const isSendBusy = isLocalDispatchBusy || isWorkspaceSwitching;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  useEffect(() => {
+    if (!timelineAnchorMessageId) {
+      return;
+    }
+    if (isWorking || !latestTurnSettled || optimisticUserMessages.length > 0) {
+      return;
+    }
+    setTimelineAnchor((existing) =>
+      existing.threadKey === activeThreadKey && existing.messageId === timelineAnchorMessageId
+        ? { threadKey: activeThreadKey, messageId: null }
+        : existing,
+    );
+  }, [
+    activeThreadKey,
+    isWorking,
+    latestTurnSettled,
+    optimisticUserMessages.length,
+    timelineAnchorMessageId,
+  ]);
   const canQueueMessages =
     isServerThread && !isConnecting && !activeEnvironmentUnavailable && !activePendingProgress;
 
@@ -3088,13 +3121,16 @@ export default function ChatView(props: ChatViewProps) {
         sizeBytes: file.sizeBytes,
       })),
     ];
-    // Scroll to the current end *before* adding the optimistic message.
-    // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
-    // automatically pins to the new item when the data changes.
+    // Sending always returns to the live edge. Once the optimistic row is
+    // rendered, MessagesTimeline positions that sent message near the top and
+    // leaves room for the response to stream underneath it.
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
-    await legendListRef.current?.scrollToEnd?.({ animated: false });
+    setTimelineAnchor({
+      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+      messageId: messageIdForSend,
+    });
 
     setOptimisticUserMessages((existing) => [
       ...existing,
@@ -3542,11 +3578,14 @@ export default function ChatView(props: ChatViewProps) {
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
-      // Scroll to the current end *before* adding the optimistic message.
+      // Position the sent row once the optimistic message has rendered.
       isAtEndRef.current = true;
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
-      await legendListRef.current?.scrollToEnd?.({ animated: false });
+      setTimelineAnchor({
+        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        messageId: messageIdForSend,
+      });
 
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -4017,6 +4056,7 @@ export default function ChatView(props: ChatViewProps) {
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+              anchorMessageId={timelineAnchorMessageId}
               onIsAtEndChange={onIsAtEndChange}
             />
 
