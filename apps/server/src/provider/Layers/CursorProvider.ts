@@ -61,6 +61,13 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
+const CURSOR_CLI_INSTALLATION_DOCS_URL = "https://cursor.com/docs/cli/installation";
+const CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE = [
+  "Cursor ACP model discovery failed.",
+  "Cursor CLI setup may be incomplete; install or enable the Cursor CLI, restart T3 Code, and try again.",
+  `See ${CURSOR_CLI_INSTALLATION_DOCS_URL}.`,
+  "Check server logs for ACP details.",
+].join(" ");
 export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
   _meta: {
     parameterizedModelPicker: true,
@@ -605,6 +612,14 @@ function joinProviderMessages(...messages: ReadonlyArray<string | undefined>): s
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
+function buildCursorCliCommandMissingMessage(binaryPath: string): string {
+  return [
+    `Cursor CLI command \`${binaryPath}\` was not found.`,
+    `Install or enable the Cursor CLI, make sure \`${binaryPath}\` is on PATH, then restart T3 Code.`,
+    `See ${CURSOR_CLI_INSTALLATION_DOCS_URL}.`,
+  ].join(" ");
+}
+
 export function buildCursorProviderSnapshot(input: {
   readonly checkedAt: string;
   readonly cursorSettings: CursorSettings;
@@ -1014,7 +1029,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         status: "error",
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
-          ? "Cursor Agent CLI (`agent`) is not installed or not on PATH."
+          ? buildCursorCliCommandMissingMessage(cursorSettings.binaryPath)
           : `Failed to execute Cursor Agent CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
       },
     });
@@ -1073,7 +1088,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       yield* Effect.logWarning("Cursor ACP model discovery failed", {
         cause: Cause.pretty(discoveryExit.cause),
       });
-      discoveryWarning = "Cursor ACP model discovery failed. Check server logs for details.";
+      discoveryWarning = CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE;
     } else if (Option.isNone(discoveryExit.value)) {
       discoveryWarning = `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
     } else if (discoveryExit.value.value.length === 0) {
