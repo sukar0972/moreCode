@@ -2,12 +2,15 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  MessageId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationProjectShell,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
   type OrchestrationThread,
+  type SectionContextSnapshot,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -79,13 +82,43 @@ function appendFileReferencesToMessage(
   return message + referenceBlock;
 }
 
-function withSectionContext(message: string, thread: OrchestrationThread): string {
-  const context = thread.sectionContextSnapshot;
-  if (!context || context.markdown.trim().length === 0) {
+export function resolveSectionContextSnapshot(
+  thread: OrchestrationThread,
+  project: OrchestrationProjectShell | null | undefined,
+): SectionContextSnapshot | undefined {
+  if (thread.sectionContextSnapshot) {
+    return thread.sectionContextSnapshot;
+  }
+  if (project?.kind !== "section") {
+    return undefined;
+  }
+  return {
+    title: project.title,
+    markdown: project.contextMarkdown ?? "",
+    version: project.contextVersion ?? 0,
+  };
+}
+
+export function isFirstUserMessageTurn(thread: OrchestrationThread, messageId: MessageId): boolean {
+  const messageIndex = thread.messages.findIndex((entry) => entry.id === messageId);
+  if (messageIndex < 0) {
+    return false;
+  }
+  return !thread.messages.slice(0, messageIndex).some((entry) => entry.role === "user");
+}
+
+function withSectionContext(
+  message: string,
+  input: {
+    readonly context: SectionContextSnapshot | undefined;
+    readonly includeContext: boolean;
+  },
+): string {
+  if (!input.includeContext) {
     return message;
   }
-  const userMessageCount = thread.messages.filter((entry) => entry.role === "user").length;
-  if (userMessageCount > 1) {
+  const context = input.context;
+  if (!context || context.markdown.trim().length === 0) {
     return message;
   }
   return `<task_section_context title="${context.title}" version="${context.version}">
@@ -584,6 +617,7 @@ const make = Effect.gen(function* () {
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly messageId: MessageId;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -604,12 +638,17 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
+    const project = yield* resolveProject(thread.projectId);
+    const sectionContext = resolveSectionContextSnapshot(thread, project);
     const messageWithFileReferences = appendFileReferencesToMessage(
       input.messageText,
       input.attachments,
     );
     const normalizedInput = toNonEmptyProviderInput(
-      withSectionContext(messageWithFileReferences, thread),
+      withSectionContext(messageWithFileReferences, {
+        context: sectionContext,
+        includeContext: isFirstUserMessageTurn(thread, input.messageId),
+      }),
     );
     const normalizedAttachments = input.attachments ?? [];
     const providerAttachments = normalizedAttachments.filter((a) => a.type === "image");
@@ -777,9 +816,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const isFirstUserMessageTurn =
-      thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
+    if (isFirstUserMessageTurn(thread, event.payload.messageId)) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({
@@ -846,6 +883,7 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
+      messageId: event.payload.messageId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined

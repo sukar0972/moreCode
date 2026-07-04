@@ -5,6 +5,8 @@ import path from "node:path";
 
 import {
   ModelSelection,
+  type OrchestrationProjectShell,
+  type OrchestrationThread,
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
@@ -50,6 +52,8 @@ import {
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
+  isFirstUserMessageTurn,
+  resolveSectionContextSnapshot,
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
@@ -136,6 +140,79 @@ describe("ProviderCommandReactor", () => {
 
     it("uses the unknown driver kind when the resolved driver is not registered locally", () => {
       expect(providerErrorLabel("third_party_driver")).toBe("third_party_driver");
+    });
+  });
+
+  describe("section context delivery", () => {
+    function makeThreadWithUserMessages(
+      messageIds: ReadonlyArray<string>,
+      input?: Pick<OrchestrationThread, "sectionContextSnapshot">,
+    ): OrchestrationThread {
+      return {
+        id: ThreadId.make("thread-section-context"),
+        projectId: asProjectId("project-section-context"),
+        title: "Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        archivedAt: null,
+        deletedAt: null,
+        messages: messageIds.map((id, index) => ({
+          id: asMessageId(id),
+          role: "user" as const,
+          text: `Message ${index + 1}`,
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: `2026-01-01T00:00:0${index}.000Z`,
+          updatedAt: `2026-01-01T00:00:0${index}.000Z`,
+        })),
+        proposedPlans: [],
+        activities: [],
+        checkpoints: [],
+        session: null,
+        ...(input?.sectionContextSnapshot
+          ? { sectionContextSnapshot: input.sectionContextSnapshot }
+          : {}),
+      };
+    }
+
+    it("identifies the event message as the first user turn even if later messages are visible", () => {
+      const thread = makeThreadWithUserMessages(["message-1", "message-2"]);
+
+      expect(isFirstUserMessageTurn(thread, asMessageId("message-1"))).toBe(true);
+      expect(isFirstUserMessageTurn(thread, asMessageId("message-2"))).toBe(false);
+    });
+
+    it("falls back to live section project context when a section thread has no snapshot", () => {
+      const thread = makeThreadWithUserMessages(["message-1"]);
+      const project: OrchestrationProjectShell = {
+        id: asProjectId("project-section-context"),
+        title: "Section",
+        workspaceRoot: "/tmp/sections/section",
+        kind: "section",
+        contextMarkdown: "Use the shared section context.",
+        contextVersion: 7,
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      expect(resolveSectionContextSnapshot(thread, project)).toEqual({
+        title: "Section",
+        markdown: "Use the shared section context.",
+        version: 7,
+      });
     });
   });
 
