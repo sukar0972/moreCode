@@ -67,6 +67,9 @@ describe("getComposerProviderState", () => {
     expect(getComposerPromptInjectionState("Ultrathink:\nInvestigate this failure")).toBe(
       "ultrathink",
     );
+    expect(getComposerPromptInjectionState("Ultrathink:\nInvestigate this failure deeply")).toBe(
+      "ultrathink",
+    );
   });
 
   it("returns descriptor defaults when no selections are provided", () => {

@@ -21,6 +21,7 @@ export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
+  // Coarse prompt-derived state keeps provider chrome stable across ordinary body edits.
   promptInjectionState?: ComposerPromptInjectionState;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
 };
