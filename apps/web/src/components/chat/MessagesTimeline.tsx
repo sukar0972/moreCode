@@ -4,6 +4,7 @@ import {
   type ServerProviderSkill,
   type TurnId,
 } from "@t3tools/contracts";
+import { resolveChatListAnchorPosition } from "@t3tools/shared/chatList";
 import {
   createContext,
   memo,
@@ -108,6 +109,7 @@ const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const TIMELINE_ANCHORED_LIST_FOOTER = <div className="h-[55vh]" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 // ---------------------------------------------------------------------------
@@ -136,6 +138,7 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  anchorMessageId: MessageId | null;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -165,6 +168,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
+  anchorMessageId,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -193,6 +197,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const anchorPosition = useMemo(
+    () =>
+      resolveChatListAnchorPosition(rows, anchorMessageId, (row) =>
+        row.kind === "message" ? row.message.id : null,
+      ),
+    [anchorMessageId, rows],
+  );
+  const anchorScrollKey = anchorPosition
+    ? `${anchorMessageId}:${anchorPosition.anchorIndex}:${anchorPosition.anchorOffset}`
+    : null;
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -218,6 +232,36 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       window.cancelAnimationFrame(frameId);
     };
   }, [listRef, onIsAtEndChange, rows.length]);
+
+  useEffect(() => {
+    if (!anchorPosition || !anchorMessageId) {
+      return;
+    }
+
+    let cancelled = false;
+    let secondFrameId: number | null = null;
+    const firstFrameId = window.requestAnimationFrame(() => {
+      secondFrameId = window.requestAnimationFrame(() => {
+        if (cancelled) {
+          return;
+        }
+        void listRef.current?.scrollToIndex?.({
+          index: anchorPosition.anchorIndex,
+          animated: true,
+          viewPosition: 0,
+          viewOffset: anchorPosition.anchorOffset,
+        });
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        window.cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [anchorMessageId, anchorPosition, anchorScrollKey, listRef]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -284,13 +328,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           renderItem={renderItem}
           estimatedItemSize={90}
           initialScrollAtEnd
-          maintainScrollAtEnd
+          maintainScrollAtEnd={!anchorMessageId}
           maintainScrollAtEndThreshold={0.1}
           maintainVisibleContentPosition
           onScroll={handleScroll}
           className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
           ListHeaderComponent={TIMELINE_LIST_HEADER}
-          ListFooterComponent={TIMELINE_LIST_FOOTER}
+          ListFooterComponent={
+            anchorMessageId && (activeTurnInProgress || anchorPosition)
+              ? TIMELINE_ANCHORED_LIST_FOOTER
+              : TIMELINE_LIST_FOOTER
+          }
         />
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
