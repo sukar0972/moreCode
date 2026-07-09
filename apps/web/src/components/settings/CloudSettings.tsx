@@ -12,6 +12,7 @@ import { usePrimarySessionState } from "../../environments/primary";
 import { webRuntime } from "../../lib/runtime";
 import { cn } from "../../lib/utils";
 import { DesktopClerkWaitlist } from "../clerk/DesktopClerkWaitlist";
+import { MobileClientsUserProfilePage } from "../clerk/MobileClientsUserProfilePage";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
@@ -127,7 +128,17 @@ function CloudSettingsPanelInner() {
         <SettingsRow
           title="Cloud account"
           description="Manage your private-beta T3 Cloud session."
-          control={<UserButton />}
+          control={
+            <UserButton>
+              <UserButton.UserProfilePage
+                label="Mobile clients"
+                labelIcon={<SmartphoneIcon className="size-4" />}
+                url="mobile-clients"
+              >
+                <MobileClientsUserProfilePage />
+              </UserButton.UserProfilePage>
+            </UserButton>
+          }
         />
       </SettingsSection>
       <SettingsSection title="Preferences">
